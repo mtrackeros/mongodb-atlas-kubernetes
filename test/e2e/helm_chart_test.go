@@ -4,22 +4,33 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions/kube"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/cli/helm"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/config"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/k8s"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/model"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/utils"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions/kube"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/cli"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/cli/helm"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/config"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/k8s"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/model"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/utils"
 )
 
-var _ = Describe("HELM charts", func() {
+var _ = Describe("HELM charts", Ordered, func() {
 	var data model.TestDataProvider
+	skipped := false
+
+	_ = BeforeAll(func() {
+		cli.Execute("kubectl", "delete", "--ignore-not-found=true", "-f", "../../deploy/crds").Wait().Out.Contents()
+	})
+
+	_ = AfterAll(func() {
+		cli.Execute("kubectl", "apply", "-f", "../../deploy/crds").Wait().Out.Contents()
+	})
 
 	_ = BeforeEach(func() {
 		imageURL := os.Getenv("IMAGE_URL")
@@ -28,27 +39,30 @@ var _ = Describe("HELM charts", func() {
 
 	_ = AfterEach(func() {
 		By("After each.", func() {
+			if skipped {
+				return
+			}
 			GinkgoWriter.Write([]byte("\n"))
 			GinkgoWriter.Write([]byte("===============================================\n"))
 			GinkgoWriter.Write([]byte("Operator namespace: " + data.Resources.Namespace + "\n"))
 			GinkgoWriter.Write([]byte("===============================================\n"))
 			if CurrentSpecReport().Failed() {
-				GinkgoWriter.Write([]byte("Resources wasn't clean"))
+				GinkgoWriter.Write([]byte("Resources wasn't clean\n"))
 				namespaceDeployment, err := k8s.GetDeployment("mongodb-atlas-operator", data.Resources.Namespace)
 				Expect(err).Should(BeNil())
 				namespaceDeploymentJSON, err := json.MarshalIndent(namespaceDeployment, "", "  ")
 				Expect(err).Should(BeNil())
-				utils.SaveToFile("namespace-deployment.json", namespaceDeploymentJSON)
+				utils.SaveToFile("output/namespace-deployment.json", namespaceDeploymentJSON)
 
 				pod, err := k8s.GetAllDeploymentPods("mongodb-atlas-operator", data.Resources.Namespace)
 				Expect(err).Should(BeNil())
 				podJSON, err := json.MarshalIndent(pod, "", "  ")
 				Expect(err).Should(BeNil())
-				utils.SaveToFile("namespace-pod.json", podJSON)
+				utils.SaveToFile("output/namespace-pod.json", podJSON)
 
 				bytes, err := k8s.GetPodLogsByDeployment("mongodb-atlas-operator", config.DefaultOperatorNS, corev1.PodLogOptions{})
 				if err != nil {
-					GinkgoWriter.Write([]byte(err.Error()))
+					GinkgoWriter.Write([]byte(fmt.Sprintf("%v\n", err)))
 				}
 				utils.SaveToFile(
 					fmt.Sprintf("output/%s/operator-logs-default.txt", data.Resources.Namespace),
@@ -56,7 +70,7 @@ var _ = Describe("HELM charts", func() {
 				)
 				bytes, err = k8s.GetPodLogsByDeployment("mongodb-atlas-operator", data.Resources.Namespace, corev1.PodLogOptions{})
 				if err != nil {
-					GinkgoWriter.Write([]byte(err.Error()))
+					GinkgoWriter.Write([]byte(fmt.Sprintf("%v\n", err)))
 				}
 				utils.SaveToFile(
 					fmt.Sprintf("output/%s/operator-logs.txt", data.Resources.Namespace),
@@ -76,8 +90,6 @@ var _ = Describe("HELM charts", func() {
 			data = test
 			GinkgoWriter.Println(data.Resources.KeyName)
 			switch deploymentType {
-			case "advanced":
-				data.Resources.Deployments[0].Spec.AdvancedDeploymentSpec.Name = data.Resources.KeyName
 			case "serverless":
 				data.Resources.Deployments[0].Spec.ServerlessSpec.Name = data.Resources.KeyName
 			default:
@@ -107,7 +119,7 @@ var _ = Describe("HELM charts", func() {
 				"helm-ns",
 				model.AProject{},
 				model.NewEmptyAtlasKeyType().UseDefaultFullAccess(),
-				[]string{"data/atlasdeployment_basic_helm.yaml"},
+				[]string{"../helper/e2e/data/atlasdeployment_basic_helm.yaml"},
 				[]string{},
 				[]model.DBUser{
 					*model.NewDBUser("reader").
@@ -124,12 +136,12 @@ var _ = Describe("HELM charts", func() {
 			),
 			"default",
 		),
-		Entry("Advanced deployment by helm chart", Label("helm-advanced"),
+		Entry("Deployment by helm chart", Label("helm-advanced"),
 			model.DataProviderWithResources(
 				"helm-advanced",
 				model.AProject{},
 				model.NewEmptyAtlasKeyType().UseDefaultFullAccess(),
-				[]string{"data/atlasdeployment_advanced_helm.yaml"},
+				[]string{"../helper/e2e/data/atlasdeployment_advanced_helm.yaml"},
 				[]string{},
 				[]model.DBUser{
 					*model.NewDBUser("reader2").
@@ -142,12 +154,12 @@ var _ = Describe("HELM charts", func() {
 			),
 			"advanced",
 		),
-		Entry("Advanced multiregion deployment by helm chart", Label("helm-advanced-multiregion"),
+		Entry("Deployment multiregion by helm chart", Label("helm-advanced-multiregion"),
 			model.DataProviderWithResources(
 				"helm-advanced-multiregion",
 				model.AProject{},
 				model.NewEmptyAtlasKeyType().UseDefaultFullAccess(),
-				[]string{"data/atlasdeployment_advanced_multi_region_helm.yaml"},
+				[]string{"../helper/e2e/data/atlasdeployment_advanced_multi_region_helm.yaml"},
 				[]string{},
 				[]model.DBUser{
 					*model.NewDBUser("reader2").
@@ -165,7 +177,7 @@ var _ = Describe("HELM charts", func() {
 				"helm-serverless",
 				model.AProject{},
 				model.NewEmptyAtlasKeyType().UseDefaultFullAccess(),
-				[]string{"data/atlasdeployment_serverless.yaml"},
+				[]string{"../helper/e2e/data/atlasdeployment_serverless.yaml"},
 				[]string{},
 				[]model.DBUser{
 					*model.NewDBUser("reader2").
@@ -187,7 +199,7 @@ var _ = Describe("HELM charts", func() {
 					"helm-wide",
 					model.AProject{},
 					model.NewEmptyAtlasKeyType().UseDefaultFullAccess(),
-					[]string{"data/atlasdeployment_basic_helm.yaml"},
+					[]string{"../helper/e2e/data/atlasdeployment_basic_helm.yaml"},
 					[]string{},
 					[]model.DBUser{
 						*model.NewDBUser("reader2").
@@ -215,12 +227,25 @@ var _ = Describe("HELM charts", func() {
 
 	Describe("HELM charts.", Label("helm-update"), func() {
 		It("User deploy operator and later deploy new version of the Atlas operator", func() {
+			By("Check upgrade is actually possible", func() {
+				helm.AddMongoDBRepo()
+				releasedVersion, err := helm.GetReleasedChartVersion()
+				Expect(err).Should(BeNil())
+				devMajorVersion, err := helm.GetDevelopmentMayorVersion()
+				Expect(err).Should(BeNil())
+				releaseMajorVersion := strings.Split(releasedVersion, ".")[0]
+				if releaseMajorVersion != devMajorVersion {
+					skipped = true
+					Skip(fmt.Sprintf("cannot test upgrade from incompatible major release version %q to version %q",
+						releaseMajorVersion, devMajorVersion))
+				}
+			})
 			By("User creates configuration for a new Project, Deployment, DBUser", func() {
 				data = model.DataProviderWithResources(
 					"helm-upgrade",
 					model.AProject{},
 					model.NewEmptyAtlasKeyType().UseDefaultFullAccess(),
-					[]string{"data/atlasdeployment_basic_helm.yaml"},
+					[]string{"../helper/e2e/data/atlasdeployment_basic_helm.yaml"},
 					[]string{},
 					[]model.DBUser{
 						*model.NewDBUser("admin").
@@ -236,14 +261,13 @@ var _ = Describe("HELM charts", func() {
 				data.Resources.Deployments[0].Spec.DeploymentSpec.Name = "deployment-from-helm-upgrade"
 			})
 			By("User use helm for last released version of operator and deploy his resources", func() {
-				helm.AddMongoDBRepo()
 				helm.InstallOperatorNamespacedFromLatestRelease(data.Resources)
 				helm.InstallDeploymentRelease(data.Resources)
 				waitDeploymentWithChecks(&data)
 			})
 			By("User update new released operator", func() {
 				backup := true
-				data.Resources.Deployments[0].Spec.DeploymentSpec.ProviderBackupEnabled = &backup
+				data.Resources.Deployments[0].Spec.DeploymentSpec.BackupEnabled = &backup
 				actions.HelmUpgradeChartVersions(&data)
 				actions.CheckUsersCanUseOldApp(&data)
 			})
@@ -255,7 +279,7 @@ var _ = Describe("HELM charts", func() {
 })
 
 func waitDeploymentWithChecks(data *model.TestDataProvider) {
-	By("Wait creation until is done", func() {
+	By("Wait for a Deployment to be created", func() {
 		actions.WaitProjectWithoutGenerationCheck(data)
 		resource, err := kube.GetProjectResource(data)
 		Expect(err).Should(BeNil())
@@ -266,10 +290,6 @@ func waitDeploymentWithChecks(data *model.TestDataProvider) {
 	By("Check attributes", func() {
 		deployment := data.Resources.Deployments[0]
 		switch {
-		case deployment.Spec.AdvancedDeploymentSpec != nil:
-			advancedDeployment, err := atlasClient.GetDeployment(data.Resources.ProjectID, deployment.Spec.AdvancedDeploymentSpec.Name)
-			Expect(err).To(BeNil())
-			actions.CompareAdvancedDeploymentsSpec(deployment.Spec, *advancedDeployment)
 		case deployment.Spec.ServerlessSpec != nil:
 			serverlessInstance, err := atlasClient.GetServerlessInstance(data.Resources.ProjectID, deployment.Spec.ServerlessSpec.Name)
 			Expect(err).To(BeNil())
@@ -306,5 +326,9 @@ func deleteDeploymentAndOperator(data *model.TestDataProvider) {
 
 	By("Delete HELM releases", func() {
 		helm.UninstallKubernetesOperator(data.Resources)
+	})
+
+	By("Uninstall HELM CRDs", func() {
+		helm.UninstallCRD(data.Resources)
 	})
 }

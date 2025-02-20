@@ -1,0 +1,19 @@
+with-expecter: true
+disable-version-string: true
+dir: internal/mocks/translation
+outpkg: translation
+filename: "{{ .InterfaceName | snakecase }}.go"
+mockname: "{{.InterfaceName}}Mock"
+all: true
+packages:
+  github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/translation/ipaccesslist:
+  github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/translation/project:
+  github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/translation/dbuser:
+  github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/translation/deployment:
+  github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/translation/customroles:
+  github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/translation/datafederation:
+  github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/translation/teams:
+  github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/translation/privateendpoint:
+  github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/translation/maintenancewindow:
+  github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/translation/encryptionatrest:
+  github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/translation/networkcontainer:

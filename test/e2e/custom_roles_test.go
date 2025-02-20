@@ -5,15 +5,15 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/types"
 
-	v1 "github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/status"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/toptr"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/data"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/model"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api"
+	akov2 "github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/pointer"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/data"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/model"
 )
 
-var _ = Describe("UserLogin", Label("custom-roles"), func() {
+var _ = Describe("CustomRoles", Label("custom-roles"), func() {
 	var testData *model.TestDataProvider
 
 	_ = AfterEach(func() {
@@ -32,7 +32,7 @@ var _ = Describe("UserLogin", Label("custom-roles"), func() {
 	})
 
 	DescribeTable("Namespaced operators working only with its own namespace with different configuration",
-		func(test *model.TestDataProvider, customRoles []v1.CustomRole) {
+		func(test *model.TestDataProvider, customRoles []akov2.CustomRole) {
 			testData = test
 			actions.ProjectCreationFlow(test)
 			projectCustomRolesFlow(test, customRoles)
@@ -44,10 +44,10 @@ var _ = Describe("UserLogin", Label("custom-roles"), func() {
 				40000,
 				[]func(*model.TestDataProvider){},
 			).WithProject(data.DefaultProject()),
-			[]v1.CustomRole{
+			[]akov2.CustomRole{
 				{
 					Name: "ShardingAdmin",
-					InheritedRoles: []v1.Role{
+					InheritedRoles: []akov2.Role{
 						{
 							Name:     "enableSharding",
 							Database: "admin",
@@ -57,20 +57,20 @@ var _ = Describe("UserLogin", Label("custom-roles"), func() {
 							Database: "admin",
 						},
 					},
-					Actions: []v1.Action{
+					Actions: []akov2.Action{
 						{
 							Name: "LIST_SESSIONS",
-							Resources: []v1.Resource{
+							Resources: []akov2.Resource{
 								{
-									Cluster: toptr.MakePtr(true),
+									Cluster: pointer.MakePtr(true),
 								},
 							},
 						},
 						{
 							Name: "KILL_ANY_SESSION",
-							Resources: []v1.Resource{
+							Resources: []akov2.Resource{
 								{
-									Cluster: toptr.MakePtr(true),
+									Cluster: pointer.MakePtr(true),
 								},
 							},
 						},
@@ -78,7 +78,7 @@ var _ = Describe("UserLogin", Label("custom-roles"), func() {
 				},
 				{
 					Name: "test",
-					InheritedRoles: []v1.Role{
+					InheritedRoles: []akov2.Role{
 						{
 							Name:     "readWrite",
 							Database: "test",
@@ -94,27 +94,27 @@ var _ = Describe("UserLogin", Label("custom-roles"), func() {
 	)
 })
 
-func projectCustomRolesFlow(userData *model.TestDataProvider, customRoles []v1.CustomRole) {
+func projectCustomRolesFlow(userData *model.TestDataProvider, customRoles []akov2.CustomRole) {
 	By("Add Custom Roles to the project", func() {
 		userData.Project.Spec.CustomRoles = customRoles
 		Expect(userData.K8SClient.Update(userData.Context, userData.Project)).Should(Succeed())
-		actions.WaitForConditionsToBecomeTrue(userData, status.ProjectCustomRolesReadyType, status.ReadyType)
+		actions.WaitForConditionsToBecomeTrue(userData, api.ProjectCustomRolesReadyType, api.ReadyType)
 	})
 
 	By("Update Custom Role from the project", func() {
 		crActions := userData.Project.Spec.CustomRoles[0].Actions
-		crActions = append(crActions, v1.Action{
+		crActions = append(crActions, akov2.Action{
 			Name: "USE_UUID",
-			Resources: []v1.Resource{
+			Resources: []akov2.Resource{
 				{
-					Cluster: toptr.MakePtr(true),
+					Cluster: pointer.MakePtr(true),
 				},
 			},
 		})
 		userData.Project.Spec.CustomRoles[0].Actions = crActions
 
 		Expect(userData.K8SClient.Update(userData.Context, userData.Project)).Should(Succeed())
-		actions.WaitForConditionsToBecomeTrue(userData, status.ProjectCustomRolesReadyType, status.ReadyType)
+		actions.WaitForConditionsToBecomeTrue(userData, api.ProjectCustomRolesReadyType, api.ReadyType)
 	})
 
 	By("Remove one Custom Roles from the project", func() {
@@ -125,7 +125,7 @@ func projectCustomRolesFlow(userData *model.TestDataProvider, customRoles []v1.C
 			userData.Project.Spec.CustomRoles = cr[:1]
 			g.Expect(userData.K8SClient.Update(userData.Context, userData.Project)).Should(Succeed())
 		}).Should(Succeed())
-		actions.WaitForConditionsToBecomeTrue(userData, status.ProjectCustomRolesReadyType, status.ReadyType)
+		actions.WaitForConditionsToBecomeTrue(userData, api.ProjectCustomRolesReadyType, api.ReadyType)
 	})
 
 	By("Remove all Custom Roles from the project", func() {
@@ -135,6 +135,6 @@ func projectCustomRolesFlow(userData *model.TestDataProvider, customRoles []v1.C
 			userData.Project.Spec.CustomRoles = nil
 			g.Expect(userData.K8SClient.Update(userData.Context, userData.Project)).Should(Succeed())
 		}).Should(Succeed())
-		actions.CheckProjectConditionsNotSet(userData, status.ProjectCustomRolesReadyType)
+		actions.CheckProjectConditionsNotSet(userData, api.ProjectCustomRolesReadyType)
 	})
 }

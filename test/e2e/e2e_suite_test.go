@@ -9,10 +9,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/api/atlas"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/config"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/utils"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/helper"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/control"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/api/atlas"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/config"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/utils"
 )
 
 const (
@@ -22,25 +22,23 @@ const (
 )
 
 var (
-	// default
-	Platform    = "kind"
-	K8sVersion  = "v1.17.17"
 	atlasClient *atlas.Atlas
 )
 
 func TestE2e(t *testing.T) {
-	if !helper.Enabled("AKO_E2E_TEST") {
-		t.Skip("Skipping e2e tests, AKO_E2E_TEST is not set")
-	}
+	control.SkipTestUnless(t, "AKO_E2E_TEST")
+
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "E2E Suite")
+	RunSpecs(t, "Atlas Operator E2E Test Suite")
 }
 
 var _ = BeforeSuite(func() {
-	if !helper.Enabled("AKO_E2E_TEST") {
+	if !control.Enabled("AKO_E2E_TEST") {
 		fmt.Println("Skipping e2e BeforeSuite, AKO_E2E_TEST is not set")
+
 		return
 	}
+
 	GinkgoWriter.Write([]byte("==============================Before==============================\n"))
 	SetDefaultEventuallyTimeout(EventuallyTimeout)
 	SetDefaultEventuallyPollingInterval(PollingInterval)
@@ -49,15 +47,17 @@ var _ = BeforeSuite(func() {
 	GinkgoWriter.Write([]byte("========================End of Before==============================\n"))
 })
 
+var _ = ReportAfterSuite("Ensure test suite was not empty", func(r Report) {
+	Expect(r.PreRunStats.SpecsThatWillRun > 0).To(BeTrue(), "Suite must run at least 1 test")
+})
+
 // checkUpEnvironment initial check setup
 func checkUpEnvironment() {
-	Platform = os.Getenv("K8S_PLATFORM")
-	K8sVersion = os.Getenv("K8S_VERSION")
-
 	Expect(os.Getenv("MCLI_ORG_ID")).ShouldNot(BeEmpty(), "Please, setup MCLI_ORG_ID environment variable")
 	Expect(os.Getenv("MCLI_PUBLIC_API_KEY")).ShouldNot(BeEmpty(), "Please, setup MCLI_PUBLIC_API_KEY environment variable")
 	Expect(os.Getenv("MCLI_PRIVATE_API_KEY")).ShouldNot(BeEmpty(), "Please, setup MCLI_PRIVATE_API_KEY environment variable")
 	Expect(os.Getenv("MCLI_OPS_MANAGER_URL")).ShouldNot(BeEmpty(), "Please, setup MCLI_OPS_MANAGER_URL environment variable")
+
 	atlasClient = atlas.GetClientOrFail()
 }
 
@@ -76,6 +76,7 @@ func checkUpAzureEnvironment() {
 
 func checkNSetUpGCPEnvironment() {
 	Expect(os.Getenv("GCP_SA_CRED")).ShouldNot(BeEmpty(), "Please, setup GCP_SA_CRED environment variable for test with GCP (req. Service Account)")
+	Expect(os.MkdirAll("../../output", 0750)).ShouldNot(HaveOccurred())
 	Expect(utils.SaveToFile(config.FileNameSAGCP, []byte(os.Getenv("GCP_SA_CRED")))).ShouldNot(HaveOccurred())
 	Expect(os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", config.FileNameSAGCP)).ShouldNot(HaveOccurred())
 	Expect(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")).ShouldNot(BeEmpty(), "Please, setup GOOGLE_APPLICATION_CREDENTIALS environment variable for test with GCP")

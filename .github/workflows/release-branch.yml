@@ -9,6 +9,9 @@ on:
       version:
         description: "Release version:"
         required: true
+      authors:
+        description: "Comma separated list of the release authors' emails"
+        required: true
 
 jobs:
   create-release-branch:
@@ -17,7 +20,7 @@ jobs:
     env:
       VERSION: ${{ github.event.inputs.version }}
       TAG: v${{ github.event.inputs.version }}
-      GITHUB_REPO: mongodb/mongodb-atlas-kubernetes
+      AUTHORS: ${{ github.event.inputs.authors }}
       DOCKER_RELEASE_REPO: mongodb/mongodb-atlas-kubernetes-operator
     steps:
 
@@ -33,33 +36,30 @@ jobs:
         VERSION: ${{ env.VERSION }}
         ENV: prod
 
-    - name: Setup Go
-      uses: actions/setup-go@v4
+    - name: Install devbox
+      uses: jetify-com/devbox-install-action@v0.12.0
       with:
-        go-version-file: "${{ github.workspace }}/go.mod"
+        enable-cache: 'true'
 
     - name: Download dependencies
-      run: |
-        go mod download
+      run: devbox run -- 'go mod download'
 
-    - name: Create the licence report file
+    - name: Generate SDLC checklist files for released version
       run: |
-        export PATH="$GOPATH/bin:$PATH"
-        go install github.com/google/go-licenses@v1.5.0
-        cd cmd/manager
-        go-licenses csv .  --stderrthreshold 3 > ../../third_party_licenses.txt
+         devbox run -- 'make gen-sdlc-checklist VERSION=${{ env.VERSION }} AUTHORS=${{ env.AUTHORS }}'
 
     - name: Configure Git
       run: |
-        git remote set-url origin https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ env.GITHUB_REPO }}.git
+        git remote set-url origin https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git config --global user.name "github-actions[bot]"
 
     - name: Create branch and push it
       run: |
+        devbox run -- 'make check-major-version'
         BRANCH="release/${VERSION}"
         git checkout -b $BRANCH
-        git add -f ./deploy third_party_licenses.txt ./bundle bundle.Dockerfile
+        git add -f ./deploy ./bundle bundle.Dockerfile docs/releases
         git commit -m "Release ${VERSION}"
         git reset --hard
         git push --set-upstream origin $BRANCH
@@ -68,5 +68,6 @@ jobs:
       uses: ./.github/actions/create-pr
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REVIEWERS: ${{ env.REVIEWERS }}
       with:
-        REVIEWERS: igor-karpukhin,helderjs,josvazg,roothorp
+        REVIEWERS: ${{ env.REVIEWERS }}

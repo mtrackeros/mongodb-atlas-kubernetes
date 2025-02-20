@@ -6,22 +6,19 @@ import (
 	"net/http"
 	"time"
 
-	"k8s.io/apimachinery/pkg/types"
-
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/controller/connectionsecret"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/controller/customresource"
-
-	mdbv1 "github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/project"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/status"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/kube"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/testutil"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api"
+	akov2 "github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1/project"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/controller/connectionsecret"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/controller/customresource"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/kube"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/resources"
 )
 
 var _ = Describe("AtlasDataFederation", Label("AtlasDataFederation"), func() {
@@ -32,8 +29,8 @@ var _ = Describe("AtlasDataFederation", Label("AtlasDataFederation"), func() {
 
 	var (
 		connectionSecret      corev1.Secret
-		createdProject        *mdbv1.AtlasProject
-		createdDataFederation *mdbv1.AtlasDataFederation
+		createdProject        *akov2.AtlasProject
+		createdDataFederation *akov2.AtlasDataFederation
 		manualDeletion        bool
 	)
 
@@ -50,12 +47,12 @@ var _ = Describe("AtlasDataFederation", Label("AtlasDataFederation"), func() {
 					connectionsecret.TypeLabelKey: connectionsecret.CredLabelVal,
 				},
 			},
-			StringData: map[string]string{OrgID: connection.OrgID, PublicAPIKey: connection.PublicKey, PrivateAPIKey: connection.PrivateKey},
+			StringData: secretData(),
 		}
 		By(fmt.Sprintf("Creating the Secret %s", kube.ObjectKeyFromObject(&connectionSecret)))
 		Expect(k8sClient.Create(context.Background(), &connectionSecret)).To(Succeed())
 
-		createdProject = mdbv1.DefaultProject(namespace.Name, connectionSecret.Name).WithIPAccessList(project.NewIPAccessList().WithCIDR("0.0.0.0/0"))
+		createdProject = akov2.DefaultProject(namespace.Name, connectionSecret.Name).WithIPAccessList(project.NewIPAccessList().WithCIDR("0.0.0.0/0"))
 		if DeploymentDevMode {
 			// While developing tests we need to reuse the same project
 			createdProject.Spec.Name = "dev-test atlas-project"
@@ -63,7 +60,7 @@ var _ = Describe("AtlasDataFederation", Label("AtlasDataFederation"), func() {
 		By("Creating the project " + createdProject.Name)
 		Expect(k8sClient.Create(context.Background(), createdProject)).To(Succeed())
 		Eventually(func() bool {
-			return testutil.CheckCondition(k8sClient, createdProject, status.TrueCondition(status.ReadyType))
+			return resources.CheckCondition(k8sClient, createdProject, api.TrueCondition(api.ReadyType))
 		}).WithTimeout(30 * time.Minute).WithPolling(interval).Should(BeTrue())
 	})
 
@@ -74,7 +71,9 @@ var _ = Describe("AtlasDataFederation", Label("AtlasDataFederation"), func() {
 		if manualDeletion && createdProject != nil {
 			By("Deleting the deployment in Atlas manually", func() {
 				// We need to remove the deployment in Atlas manually to let project get removed
-				_, err := atlasClient.AdvancedClusters.Delete(context.Background(), createdProject.ID(), createdDataFederation.Name, nil)
+				_, err := atlasClient.ClustersApi.
+					DeleteCluster(context.Background(), createdProject.ID(), createdDataFederation.Name).
+					Execute()
 				Expect(err).NotTo(HaveOccurred())
 				Eventually(checkAtlasDeploymentRemoved(createdProject.Status.ID, createdDataFederation.Name), 600, interval).Should(BeTrue())
 				createdDataFederation = nil
@@ -85,7 +84,7 @@ var _ = Describe("AtlasDataFederation", Label("AtlasDataFederation"), func() {
 				By("Removing Atlas DataFederation " + createdDataFederation.Name)
 				Expect(k8sClient.Delete(context.Background(), createdDataFederation)).To(Succeed())
 				deploymentName := createdDataFederation.Name
-				if customresource.ResourceShouldBeLeftInAtlas(createdDataFederation) || customresource.ReconciliationShouldBeSkipped(createdDataFederation) {
+				if customresource.IsResourcePolicyKeep(createdDataFederation) || customresource.ReconciliationShouldBeSkipped(createdDataFederation) {
 					By("Removing Atlas DataFederation " + createdDataFederation.Name + " from Atlas manually")
 					Expect(deleteAtlasDataFederation(createdProject.Status.ID, deploymentName)).To(Succeed())
 				}
@@ -102,31 +101,33 @@ var _ = Describe("AtlasDataFederation", Label("AtlasDataFederation"), func() {
 	Describe("DataFederation can be created with stores and databases", func() {
 		It("Should Succeed", func() {
 			By("Creating a DataFederation instance with DB and STORE", func() {
-				createdDataFederation = mdbv1.NewDataFederationInstance(createdProject.Name, dataFederationInstanceName, namespace.Name)
+				createdDataFederation = akov2.NewDataFederationInstance(createdProject.Name, dataFederationInstanceName, namespace.Name)
 				Expect(k8sClient.Create(context.Background(), createdDataFederation)).ShouldNot(HaveOccurred())
 
 				Eventually(func(g Gomega) {
-					df, _, err := dataFederationClient.Get(context.Background(), createdProject.ID(), createdDataFederation.Spec.Name)
+					df, _, err := atlasClient.DataFederationApi.
+						GetFederatedDatabase(context.Background(), createdProject.ID(), createdDataFederation.Spec.Name).
+						Execute()
 					g.Expect(err).ShouldNot(HaveOccurred())
 					g.Expect(df).NotTo(BeNil())
 				}).WithTimeout(20 * time.Minute).WithPolling(15 * time.Second).ShouldNot(HaveOccurred())
 			})
 
 			By("Adding a new DB and STORE", func() {
-				df := &mdbv1.AtlasDataFederation{}
+				df := &akov2.AtlasDataFederation{}
 				Expect(k8sClient.Get(context.Background(), types.NamespacedName{
 					Namespace: namespace.Name,
 					Name:      dataFederationInstanceName,
 				}, df)).To(Succeed())
 
-				dfu := df.WithStorage(&mdbv1.Storage{
-					Databases: []mdbv1.Database{
+				dfu := df.WithStorage(&akov2.Storage{
+					Databases: []akov2.Database{
 						{
 							Name: "test-db-1",
-							Collections: []mdbv1.Collection{
+							Collections: []akov2.Collection{
 								{
 									Name: "test-collection-1",
-									DataSources: []mdbv1.DataSource{
+									DataSources: []akov2.DataSource{
 										{
 											StoreName: "http-test",
 											Urls: []string{
@@ -138,7 +139,7 @@ var _ = Describe("AtlasDataFederation", Label("AtlasDataFederation"), func() {
 							},
 						},
 					},
-					Stores: []mdbv1.Store{
+					Stores: []akov2.Store{
 						{
 							Name:     "http-test",
 							Provider: "http",
@@ -149,13 +150,13 @@ var _ = Describe("AtlasDataFederation", Label("AtlasDataFederation"), func() {
 			})
 
 			By("Checking the DataFederation is ready", func() {
-				df := &mdbv1.AtlasDataFederation{}
+				df := &akov2.AtlasDataFederation{}
 				Expect(k8sClient.Get(context.Background(), types.NamespacedName{
 					Namespace: namespace.Name,
 					Name:      dataFederationInstanceName,
 				}, df)).To(Succeed())
 				Eventually(func() bool {
-					return testutil.CheckCondition(k8sClient, df, status.TrueCondition(status.ReadyType))
+					return resources.CheckCondition(k8sClient, df, api.TrueCondition(api.ReadyType))
 				}).WithTimeout(2 * time.Minute).WithPolling(20 * time.Second).Should(BeTrue())
 			})
 
@@ -168,18 +169,24 @@ var _ = Describe("AtlasDataFederation", Label("AtlasDataFederation"), func() {
 })
 
 func deleteAtlasDataFederation(projectID, dataFederationName string) error {
-	_, err := dataFederationClient.Delete(context.Background(), projectID, dataFederationName)
+	_, _, err := atlasClient.DataFederationApi.
+		DeleteFederatedDatabase(context.Background(), projectID, dataFederationName).
+		Execute()
+
 	return err
 }
 
 func checkAtlasDataFederationRemoved(projectID, dataFederation string) func() bool {
 	return func() bool {
-		_, r, err := dataFederationClient.Get(context.Background(), projectID, dataFederation)
+		_, r, err := atlasClient.DataFederationApi.
+			GetFederatedDatabase(context.Background(), projectID, dataFederation).
+			Execute()
 		if err != nil {
 			if r != nil && r.StatusCode == http.StatusNotFound {
 				return true
 			}
 		}
+
 		return false
 	}
 }

@@ -24,8 +24,9 @@ CATALOG_DIR="${CATALOG_DIR:-./openshift/atlas-catalog}"
 CATALOG_RELEASE_DIR="${CATALOG_RELEASE_DIR:-./openshift/atlas-catalog-release}"
 
 if [ -z "${CURRENT_VERSION+x}" ]; then
+  git fetch --tags
   # opm doesn't allow 'v' prefix for versions
-  CURRENT_VERSION=$(git describe --tags | awk '{gsub(/v/,"",$0); print}')
+  CURRENT_VERSION=$( (git describe --tags || echo "v0.0.0-test") | awk '{gsub(/v/,"",$0); print}')
 	echo "CURRENT_VERSION is not set. Setting to default: ${CURRENT_VERSION}"
 fi
 
@@ -130,6 +131,8 @@ oc_login() {
   echo "Logging in to the cluster..."
   expect_success_silent "oc login --token=${OC_TOKEN} --server=${CLUSTER_API_URL}"
   echo "Logged in to the cluster"
+  kubectl version
+  oc get clusterversion/version
 }
 
 prepare_test_namespace() {

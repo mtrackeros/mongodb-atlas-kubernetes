@@ -9,13 +9,14 @@ import (
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions/deploy"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions/kube"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/config"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/data"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/k8s"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/model"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/featureflags"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions/deploy"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions/kube"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/config"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/data"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/k8s"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/model"
 )
 
 // DO NOT RUN THIS TEST IN PARALLEL WITH OTHER TESTS
@@ -75,15 +76,16 @@ var _ = Describe("Deployment wide operator can work with resources in different 
 			k8s.CreateNamespace(ctx, k8sClient, config.DefaultOperatorNS)
 			k8s.CreateDefaultSecret(ctx, k8sClient, config.DefaultOperatorGlobalKey, config.DefaultOperatorNS)
 
-			mgr, err := k8s.BuildManager(&k8s.Config{
+			c, err := k8s.BuildCluster(&k8s.Config{
 				GlobalAPISecret: client.ObjectKey{
 					Namespace: config.DefaultOperatorNS,
 					Name:      config.DefaultOperatorGlobalKey,
 				},
+				FeatureFlags: featureflags.NewFeatureFlags(func() []string { return []string{} }),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			go func(ctx context.Context) context.Context {
-				err := mgr.Start(ctx)
+				err := c.Start(ctx)
 				Expect(err).NotTo(HaveOccurred())
 				return ctx
 			}(ctx)
@@ -96,7 +98,7 @@ var _ = Describe("Deployment wide operator can work with resources in different 
 			deployment := NortonData.InitialDeployments[0]
 			if deployment.Namespace == "" {
 				deployment.Namespace = NortonData.Resources.Namespace
-				deployment.Spec.Project.Namespace = NortonData.Resources.Namespace
+				deployment.Spec.ProjectRef.Namespace = NortonData.Resources.Namespace
 			}
 			err := k8sClient.Create(ctx, deployment)
 			Expect(err).ShouldNot(HaveOccurred(), fmt.Sprintf("Deployment was not created: %v", deployment))
@@ -108,7 +110,7 @@ var _ = Describe("Deployment wide operator can work with resources in different 
 			deployment := NimnulData.InitialDeployments[0]
 			if deployment.Namespace == "" {
 				deployment.Namespace = NimnulData.Resources.Namespace
-				deployment.Spec.Project.Namespace = NimnulData.Resources.Namespace
+				deployment.Spec.ProjectRef.Namespace = NimnulData.Resources.Namespace
 			}
 			err := k8sClient.Create(ctx, deployment)
 			Expect(err).ShouldNot(HaveOccurred(), fmt.Sprintf("Deployment was not created: %v", deployment))

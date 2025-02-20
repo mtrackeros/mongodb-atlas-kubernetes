@@ -3,14 +3,14 @@ package e2e_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.mongodb.org/atlas/mongodbatlas"
+	"go.mongodb.org/atlas-sdk/v20231115008/admin"
 
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/provider"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions/deploy"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/api/atlas"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/data"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/model"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/pointer"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions/deploy"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/api/atlas"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/data"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/model"
 )
 
 var _ = Describe("Free tier", Label("free-tier"), func() {
@@ -45,7 +45,7 @@ var _ = Describe("Free tier", Label("free-tier"), func() {
 				model.NewEmptyAtlasKeyType().UseDefaultFullAccess(),
 				40000,
 				[]func(*model.TestDataProvider){},
-			).WithProject(data.DefaultProject()).WithInitialDeployments(data.CreateBasicFreeDeployment("free-tier")),
+			).WithProject(data.DefaultProject()).WithInitialDeployments(data.CreateFreeAdvancedDeployment("free-tier")),
 		),
 		Entry("Test free tier advanced deployment",
 			model.DataProvider(
@@ -63,15 +63,33 @@ func freeTierDeploymentFlow(userData *model.TestDataProvider) {
 		aClient := atlas.GetClientOrFail()
 		Expect(userData.InitialDeployments).Should(HaveLen(1))
 		name := userData.InitialDeployments[0].GetDeploymentName()
-		_, _, err := aClient.Client.Clusters.Create(userData.Context, userData.Project.ID(), &mongodbatlas.Cluster{
-			Name: name,
-			ProviderSettings: &mongodbatlas.ProviderSettings{
-				ProviderName:        string(provider.ProviderTenant),
-				RegionName:          "US_EAST_1",
-				InstanceSizeName:    data.InstanceSizeM0,
-				BackingProviderName: string(provider.ProviderAWS),
-			},
-		})
+		admin.NewAdvancedClusterDescriptionWithDefaults()
+		_, _, err := aClient.Client.ClustersApi.
+			CreateCluster(
+				userData.Context,
+				userData.Project.ID(),
+				&admin.AdvancedClusterDescription{
+					Name:        &name,
+					ClusterType: pointer.MakePtr("REPLICASET"),
+					ReplicationSpecs: &[]admin.ReplicationSpec{
+						{
+							ZoneName: pointer.MakePtr("Zone 1"),
+							RegionConfigs: &[]admin.CloudRegionConfig{
+								{
+									ProviderName:        pointer.MakePtr("TENANT"),
+									BackingProviderName: pointer.MakePtr("AWS"),
+									Priority:            pointer.MakePtr(7),
+									RegionName:          pointer.MakePtr("US_EAST_1"),
+									ElectableSpecs: &admin.HardwareSpec{
+										InstanceSize: pointer.MakePtr(data.InstanceSizeM0),
+										NodeCount:    pointer.MakePtr(3),
+									},
+								},
+							},
+						},
+					},
+				},
+			).Execute()
 		Expect(err).ShouldNot(HaveOccurred())
 	})
 

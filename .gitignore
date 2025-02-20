@@ -34,7 +34,7 @@ tags
 testbin/
 
 # don't include generated files from e2e tests
-test/e2e/data/gen/
+test/e2e/data/
 test/e2e/output/
 
 node_modules
@@ -42,3 +42,12 @@ tmp/
 
 # ready to work samples
 deploy/
+
+# ignore tool binaries
+tools/clean/clean
+tools/makejwt/makejwt
+tools/metrics/metrics
+
+# ignore the ako.siging key local copy
+ako.pem
+

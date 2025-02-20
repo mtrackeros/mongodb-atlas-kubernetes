@@ -2,46 +2,17 @@
 
 set -eou pipefail
 
-if [ -z "${IMAGE+x}" ]; then
-  echo "IMAGE is not set"
-  exit 1
-fi
+echo -n "Determining SHA for arm64 ... "
+IMG_SHA_ARM64=$(docker \
+  manifest inspect quay.io/mongodb/mongodb-atlas-kubernetes-operator:${VERSION}-certified | \
+  jq --raw-output '.manifests[] | select(.platform.architecture == "arm64") | .digest')
+echo ${IMG_SHA_ARM64}
 
-if [ -z "${VERSION+x}" ]; then
-  echo "VERSION is not set"
-  exit 1
-fi
-
-# Path to https://github.com/mongodb-forks/certified-operators
-if [ -z "${RH_CERTIFIED_OPENSHIFT_REPO_PATH+x}" ]; then
-  echo "RH_CERTIFIED_OPENSHIFT_REPO_PATH is not set"
-  exit 1
-fi
-
-if [ -z "${RH_CERTIFICATION_OSPID+x}" ]; then
-  echo "RH_CERTIFICATION_OSPID is not set"
-  exit 1
-fi
-
-if [ -z "${REGISTRY_TOKEN+x}" ]; then
-  echo "REGISTRY_TOKEN is not set"
-  exit 1
-fi
-
-if [ -z "${RH_CERTIFICATION_PYXIS_API_TOKEN+x}" ]; then
-  echo "RH_CERTIFICATION_PYXIS_API_TOKEN is not set"
-  exit 1
-fi
-
-if [ -z "${CONTAINER_ENGINE+x}" ]; then
-  echo "CONTAINER_ENGINE is not set, defaulting to podman"
-  CONTAINER_ENGINE=podman
-fi
-
-preflight --version
-${CONTAINER_ENGINE} --version
-
-${CONTAINER_ENGINE} login -u unused -p "${REGISTRY_TOKEN}" quay.io --authfile ./authfile.json
+echo -n "Determining SHA for amd64 ... "
+IMG_SHA_AMD64=$(docker \
+  manifest inspect quay.io/mongodb/mongodb-atlas-kubernetes-operator:${VERSION}-certified | \
+  jq --raw-output '.manifests[] | select(.platform.architecture == "amd64") | .digest')
+echo ${IMG_SHA_AMD64}
 
 REPO="${RH_CERTIFIED_OPENSHIFT_REPO_PATH}/operators/mongodb-atlas-kubernetes"
 
@@ -56,29 +27,32 @@ pwd
 
 cp -r bundle.Dockerfile bundle/manifests bundle/metadata bundle/tests "${REPO}/${VERSION}"
 
-IMG_SHA=$("${CONTAINER_ENGINE}" inspect --format='{{ index .RepoDigests 0}}' "${IMAGE}":"${VERSION}")
-
-# Do the preflight check first
-preflight check container "${IMG_SHA}" --docker-config=./authfile.json
-
-# Send results to RedHat if preflight finished without errors
-preflight check container "${IMG_SHA}" \
-  --submit \
-  --pyxis-api-token="${RH_CERTIFICATION_PYXIS_API_TOKEN}" \
-  --certification-project-id="${RH_CERTIFICATION_OSPID}" \
-  --docker-config=./authfile.json
-
-# Replace image version with SHA256
-value="${IMG_SHA}" yq e -i '.spec.install.spec.deployments[0].spec.template.spec.containers[0].image = env(value)' \
+# Replace deployment image version with SHA256
+value="${IMG_SHA_AMD64}" yq e -i '.spec.install.spec.deployments[0].spec.template.spec.containers[0].image = "quay.io/mongodb/mongodb-atlas-kubernetes-operator@" + env(value)' \
   "${REPO}/${VERSION}"/manifests/mongodb-atlas-kubernetes.clusterserviceversion.yaml
 
-# Add skip range
-value='">=0.8.0"' yq e -i '.spec.skipRange = env(value)' \
+# set related images
+yq e -i '.spec = { "relatedImages": [ { "name": "mongodb-atlas-kubernetes-operator-arm64" }, { "name": "mongodb-atlas-kubernetes-operator-amd64" } ] } + .spec' \
   "${REPO}/${VERSION}"/manifests/mongodb-atlas-kubernetes.clusterserviceversion.yaml
+
+value="${IMG_SHA_ARM64}" yq e -i '.spec.relatedImages[0].image = "quay.io/mongodb/mongodb-atlas-kubernetes-operator@" + env(value)' \
+  "${REPO}/${VERSION}"/manifests/mongodb-atlas-kubernetes.clusterserviceversion.yaml
+
+value="${IMG_SHA_AMD64}" yq e -i '.spec.relatedImages[1].image = "quay.io/mongodb/mongodb-atlas-kubernetes-operator@" + env(value)' \
+  "${REPO}/${VERSION}"/manifests/mongodb-atlas-kubernetes.clusterserviceversion.yaml
+
+# set containerImage annotation
+value="${IMG_SHA_AMD64}" yq e -i '.metadata.annotations.containerImage = "quay.io/mongodb/mongodb-atlas-kubernetes-operator@" + env(value)' \
+  "${REPO}/${VERSION}"/manifests/mongodb-atlas-kubernetes.clusterserviceversion.yaml
+
+# set openshift versions
+yq e -i '.annotations = .annotations + { "com.redhat.openshift.versions": "v4.8" }' \
+  "${REPO}/${VERSION}"/metadata/annotations.yaml
 
 cd "${REPO}"
-git checkout -b "mongodb-atlas-kubernetes-operator-${VERSION}"
+git checkout -b "mongodb-atlas-kubernetes-operator-${VERSION}" origin/main
+git pull --rebase upstream main
 git add "${REPO}/${VERSION}"
 git commit -m "operator mongodb-atlas-kubernetes (${VERSION})" --signoff
-git push mongodb "mongodb-atlas-operator-community-${VERSION}"
+git push -u origin "mongodb-atlas-kubernetes-operator-${VERSION}"
 cd -

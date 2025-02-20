@@ -6,13 +6,16 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	v1 "github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/common"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/status"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/data"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/model"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api"
+	akov2 "github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1/common"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/api/atlas"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/data"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/model"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/utils"
 )
 
 var _ = Describe("Teams", Label("teams"), func() {
@@ -29,14 +32,13 @@ var _ = Describe("Teams", Label("teams"), func() {
 			Expect(actions.SaveTeamsToFile(testData.Context, testData.K8SClient, testData.Resources.Namespace)).Should(Succeed())
 		}
 		By("Delete Resources", func() {
-			actions.DeleteTestDataTeams(testData)
 			actions.DeleteTestDataProject(testData)
 			actions.AfterEachFinalCleanup([]model.TestDataProvider{*testData})
 		})
 	})
 
 	DescribeTable("Namespaced operators working only with its own namespace with different configuration",
-		func(test *model.TestDataProvider, teams []v1.Team) {
+		func(test *model.TestDataProvider, teams []akov2.Team) {
 			testData = test
 			actions.ProjectCreationFlow(test)
 			actions.AddTeamResourcesWithNUsers(test, teams, 1)
@@ -49,21 +51,21 @@ var _ = Describe("Teams", Label("teams"), func() {
 				40000,
 				[]func(*model.TestDataProvider){},
 			).WithProject(data.DefaultProject()),
-			[]v1.Team{
+			[]akov2.Team{
 				{
 					TeamRef: common.ResourceRefNamespaced{
-						Name: "my-team-1",
+						Name: utils.RandomName("my-team-1"),
 					},
-					Roles: []v1.TeamRole{
-						v1.TeamRoleOwner,
+					Roles: []akov2.TeamRole{
+						akov2.TeamRoleOwner,
 					},
 				},
 				{
 					TeamRef: common.ResourceRefNamespaced{
-						Name: "my-team-2",
+						Name: utils.RandomName("my-team-2"),
 					},
-					Roles: []v1.TeamRole{
-						v1.TeamRoleOwner,
+					Roles: []akov2.TeamRole{
+						akov2.TeamRoleOwner,
 					},
 				},
 			},
@@ -71,18 +73,19 @@ var _ = Describe("Teams", Label("teams"), func() {
 	)
 })
 
-func projectTeamsFlow(userData *model.TestDataProvider, teams []v1.Team) {
+func projectTeamsFlow(userData *model.TestDataProvider, teams []akov2.Team) {
 	By("Add Teams to project", func() {
+		Expect(userData.K8SClient.Get(userData.Context, client.ObjectKeyFromObject(userData.Project), userData.Project)).Should(Succeed())
 		userData.Project.Spec.Teams = teams
 		Expect(userData.K8SClient.Update(userData.Context, userData.Project)).Should(Succeed())
 		Eventually(func(g Gomega) bool {
-			return ensureTeamsStatus(g, *userData, teams, teamWasCreated)
-		}).WithTimeout(10*time.Minute).WithPolling(20*time.Second).Should(BeTrue(), "Teams were not created")
+			return ensureTeamsStatus(g, *userData, teams, teamWasAssigned)
+		}).WithTimeout(5*time.Minute).WithPolling(10*time.Second).Should(BeTrue(), "Teams were not assigned")
 
-		actions.WaitForConditionsToBecomeTrue(userData, status.ProjectTeamsReadyType, status.ReadyType)
+		actions.WaitForConditionsToBecomeTrue(userData, api.ProjectTeamsReadyType, api.ReadyType)
 	})
 
-	By("Remove one team from the project", func() {
+	By("De-assign one team from the project", func() {
 		Expect(userData.K8SClient.Get(userData.Context, types.NamespacedName{Name: userData.Project.Name,
 			Namespace: userData.Project.Namespace}, userData.Project)).Should(Succeed())
 
@@ -91,24 +94,26 @@ func projectTeamsFlow(userData *model.TestDataProvider, teams []v1.Team) {
 
 		Expect(userData.K8SClient.Update(userData.Context, userData.Project)).Should(Succeed())
 		Eventually(func(g Gomega) bool {
-			return ensureTeamsStatus(g, *userData, teams[1:], teamWasRemoved)
-		}).WithTimeout(10*time.Minute).WithPolling(20*time.Second).Should(BeTrue(), "Team were not removed")
+			return ensureTeamsStatus(g, *userData, teams[1:], teamWasDeAssigned)
+		}).WithTimeout(5*time.Minute).WithPolling(10*time.Second).Should(BeTrue(), "Team were not removed")
 
-		actions.WaitForConditionsToBecomeTrue(userData, status.ProjectTeamsReadyType, status.ReadyType)
+		actions.WaitForConditionsToBecomeTrue(userData, api.ProjectTeamsReadyType, api.ReadyType)
 	})
 
 	By("Update team role in the project", func() {
-		userData.Project.Spec.Teams[0].Roles = []v1.TeamRole{v1.TeamRoleReadOnly}
+		Expect(userData.K8SClient.Get(userData.Context, types.NamespacedName{Name: userData.Project.Name,
+			Namespace: userData.Project.Namespace}, userData.Project)).Should(Succeed())
+		userData.Project.Spec.Teams[0].Roles = []akov2.TeamRole{akov2.TeamRoleReadOnly}
 
 		Expect(userData.K8SClient.Update(userData.Context, userData.Project)).Should(Succeed())
 		Eventually(func(g Gomega) bool {
-			return ensureTeamsStatus(g, *userData, userData.Project.Spec.Teams, teamWasCreated)
-		}).WithTimeout(10*time.Minute).WithPolling(20*time.Second).Should(BeTrue(), "Teams were not created")
+			return ensureTeamsStatus(g, *userData, userData.Project.Spec.Teams, teamWasAssigned)
+		}).WithTimeout(5*time.Minute).WithPolling(10*time.Second).Should(BeTrue(), "Teams were not assigned")
 
-		actions.WaitForConditionsToBecomeTrue(userData, status.ProjectTeamsReadyType, status.ReadyType)
+		actions.WaitForConditionsToBecomeTrue(userData, api.ProjectTeamsReadyType, api.ReadyType)
 	})
 
-	By("Remove all teams from the project", func() {
+	By("De-assign all teams from the project", func() {
 		Expect(userData.K8SClient.Get(userData.Context, types.NamespacedName{Name: userData.Project.Name,
 			Namespace: userData.Project.Namespace}, userData.Project)).Should(Succeed())
 
@@ -116,30 +121,62 @@ func projectTeamsFlow(userData *model.TestDataProvider, teams []v1.Team) {
 
 		Expect(userData.K8SClient.Update(userData.Context, userData.Project)).Should(Succeed())
 		Eventually(func(g Gomega) bool {
-			return ensureTeamsStatus(g, *userData, teams, teamWasRemoved)
-		}).WithTimeout(10*time.Minute).WithPolling(20*time.Second).Should(BeTrue(), "Team were not removed")
+			return ensureTeamsStatus(g, *userData, teams, teamWasDeAssigned)
+		}).WithTimeout(5*time.Minute).WithPolling(10*time.Second).Should(BeTrue(), "Teams were not de-assigned")
 
-		actions.CheckProjectConditionsNotSet(userData, status.ProjectTeamsReadyType)
+		actions.CheckProjectConditionsNotSet(userData, api.ProjectTeamsReadyType)
+	})
+
+	By("Cleanup Atlas Teams", func() {
+		aClient := atlas.GetClientOrFail()
+
+		for _, AssociatedTeam := range teams {
+			team := &akov2.AtlasTeam{}
+			Expect(userData.K8SClient.Get(userData.Context, types.NamespacedName{Name: AssociatedTeam.TeamRef.Name, Namespace: userData.Resources.Namespace}, team)).Should(Succeed())
+			_, _, err := aClient.Client.TeamsApi.DeleteTeam(userData.Context, aClient.OrgID, team.Status.ID).Execute()
+			Expect(err).ToNot(HaveOccurred())
+			Expect(userData.K8SClient.Delete(userData.Context, team)).To(Succeed())
+		}
 	})
 }
 
-func ensureTeamsStatus(g Gomega, testData model.TestDataProvider, teams []v1.Team, check func(res *v1.AtlasTeam) bool) bool {
+func ensureTeamsStatus(g Gomega, testData model.TestDataProvider, teams []akov2.Team, check func(team *akov2.AtlasTeam, project *akov2.AtlasProject) bool) bool {
 	for _, team := range teams {
-		resource := &v1.AtlasTeam{}
-		g.Expect(testData.K8SClient.Get(testData.Context, types.NamespacedName{Name: team.TeamRef.Name, Namespace: testData.Resources.Namespace}, resource)).Should(Succeed())
+		resource := &akov2.AtlasTeam{}
+		g.Expect(testData.K8SClient.Get(testData.Context,
+			types.NamespacedName{Name: team.TeamRef.Name, Namespace: testData.Resources.Namespace}, resource)).Should(Succeed())
 
-		if !check(resource) {
+		if !check(resource, testData.Project) {
+			return false
+		}
+	}
+	return true
+}
+
+func teamWasAssigned(team *akov2.AtlasTeam, project *akov2.AtlasProject) bool {
+	if team.Status.ID == "" {
+		return false
+	}
+
+	for _, p := range team.Status.Projects {
+		if p.ID == project.ID() {
+			return true
+		}
+	}
+
+	return len(team.Finalizers) > 0
+}
+
+func teamWasDeAssigned(team *akov2.AtlasTeam, project *akov2.AtlasProject) bool {
+	if team.Status.ID == "" {
+		return false
+	}
+
+	for _, p := range team.Status.Projects {
+		if p.ID == project.ID() {
 			return false
 		}
 	}
 
-	return true
-}
-
-func teamWasCreated(team *v1.AtlasTeam) bool {
-	return team.Status.ID != ""
-}
-
-func teamWasRemoved(team *v1.AtlasTeam) bool {
-	return team.Status.ID == ""
+	return len(team.Finalizers) == 0
 }

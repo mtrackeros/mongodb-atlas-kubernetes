@@ -8,12 +8,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	v1 "github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/status"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/toptr"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/data"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/model"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api"
+	akov2 "github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1/status"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/pointer"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/data"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/model"
 )
 
 var _ = Describe("UserLogin", Label("global-deployment"), func() {
@@ -36,32 +37,11 @@ var _ = Describe("UserLogin", Label("global-deployment"), func() {
 	})
 
 	DescribeTable("Namespaced operators working only with its own namespace with different configuration",
-		func(test *model.TestDataProvider, mapping []v1.CustomZoneMapping, ns []v1.ManagedNamespace) {
+		func(test *model.TestDataProvider, mapping []akov2.CustomZoneMapping, ns []akov2.ManagedNamespace) {
 			testData = test
 			actions.ProjectCreationFlow(test)
 			globalClusterFlow(test, mapping, ns)
 		},
-		Entry("Test[gc-regular-deployment]: Deployment with global config", Label("gc-regular-deployment"),
-			model.DataProvider(
-				"gc-regular-deployment",
-				model.NewEmptyAtlasKeyType().UseDefaultFullAccess(),
-				40000,
-				[]func(*model.TestDataProvider){},
-			).WithProject(data.DefaultProject()).WithInitialDeployments(data.CreateRegularGeoshardedDeployment("gc-regular-deployment")),
-			[]v1.CustomZoneMapping{
-				{
-					Zone:     "Zone 1",
-					Location: "AO",
-				},
-			},
-			[]v1.ManagedNamespace{
-				{
-					Collection:     "somecollection",
-					Db:             "somedb",
-					CustomShardKey: "somekey",
-				},
-			},
-		),
 		Entry("Test[gc-advanced-deployment]: Advanced", Label("gc-advanced-deployment"),
 			model.DataProvider(
 				"gc-advanced-deployment",
@@ -69,7 +49,7 @@ var _ = Describe("UserLogin", Label("global-deployment"), func() {
 				40000,
 				[]func(*model.TestDataProvider){},
 			).WithProject(data.DefaultProject()).WithInitialDeployments(data.CreateAdvancedGeoshardedDeployment("gc-advanced-deployment")),
-			[]v1.CustomZoneMapping{
+			[]akov2.CustomZoneMapping{
 				{
 					Zone:     "Zone 1",
 					Location: "AO",
@@ -79,13 +59,13 @@ var _ = Describe("UserLogin", Label("global-deployment"), func() {
 					Location: "CA",
 				},
 			},
-			[]v1.ManagedNamespace{
+			[]akov2.ManagedNamespace{
 				{
 					Collection:             "somecollection",
 					Db:                     "somedb",
 					CustomShardKey:         "somekey",
-					PresplitHashedZones:    toptr.MakePtr(true),
-					IsCustomShardKeyHashed: toptr.MakePtr(true),
+					PresplitHashedZones:    pointer.MakePtr(true),
+					IsCustomShardKeyHashed: pointer.MakePtr(true),
 					NumInitialChunks:       4,
 				},
 			},
@@ -93,7 +73,7 @@ var _ = Describe("UserLogin", Label("global-deployment"), func() {
 	)
 })
 
-func globalClusterFlow(userData *model.TestDataProvider, mapping []v1.CustomZoneMapping, managedNamespace []v1.ManagedNamespace) {
+func globalClusterFlow(userData *model.TestDataProvider, mapping []akov2.CustomZoneMapping, managedNamespace []akov2.ManagedNamespace) {
 	By("Apply deployment", func() {
 		Expect(userData.InitialDeployments).ShouldNot(BeEmpty())
 		userData.InitialDeployments[0].Namespace = userData.Resources.Namespace
@@ -115,9 +95,6 @@ func globalClusterFlow(userData *model.TestDataProvider, mapping []v1.CustomZone
 		if userData.InitialDeployments[0].Spec.DeploymentSpec != nil {
 			userData.InitialDeployments[0].Spec.DeploymentSpec.ManagedNamespaces = managedNamespace
 			userData.InitialDeployments[0].Spec.DeploymentSpec.CustomZoneMapping = mapping
-		} else {
-			userData.InitialDeployments[0].Spec.AdvancedDeploymentSpec.ManagedNamespaces = managedNamespace
-			userData.InitialDeployments[0].Spec.AdvancedDeploymentSpec.CustomZoneMapping = mapping
 		}
 
 		Expect(userData.K8SClient.Update(userData.Context, userData.InitialDeployments[0])).To(Succeed())
@@ -130,7 +107,7 @@ func globalClusterFlow(userData *model.TestDataProvider, mapping []v1.CustomZone
 				Namespace: userData.InitialDeployments[0].Namespace,
 			}, userData.InitialDeployments[0])).To(Succeed())
 			for _, condition := range userData.InitialDeployments[0].Status.Conditions {
-				if condition.Type == status.CustomZoneMappingReadyType {
+				if condition.Type == api.CustomZoneMappingReadyType {
 					return condition.Status == corev1.ConditionTrue
 				}
 			}
@@ -145,7 +122,7 @@ func globalClusterFlow(userData *model.TestDataProvider, mapping []v1.CustomZone
 				Namespace: userData.InitialDeployments[0].Namespace,
 			}, userData.InitialDeployments[0])).To(Succeed())
 			for _, condition := range userData.InitialDeployments[0].Status.Conditions {
-				if condition.Type == status.ManagedNamespacesReadyType {
+				if condition.Type == api.ManagedNamespacesReadyType {
 					return condition.Status == corev1.ConditionTrue
 				}
 			}
@@ -161,9 +138,6 @@ func globalClusterFlow(userData *model.TestDataProvider, mapping []v1.CustomZone
 		if userData.InitialDeployments[0].Spec.DeploymentSpec != nil {
 			userData.InitialDeployments[0].Spec.DeploymentSpec.ManagedNamespaces = nil
 			userData.InitialDeployments[0].Spec.DeploymentSpec.CustomZoneMapping = nil
-		} else {
-			userData.InitialDeployments[0].Spec.AdvancedDeploymentSpec.ManagedNamespaces = nil
-			userData.InitialDeployments[0].Spec.AdvancedDeploymentSpec.CustomZoneMapping = nil
 		}
 		Expect(userData.K8SClient.Update(userData.Context, userData.InitialDeployments[0])).To(Succeed())
 		Eventually(func(g Gomega) bool {
@@ -172,7 +146,7 @@ func globalClusterFlow(userData *model.TestDataProvider, mapping []v1.CustomZone
 				Namespace: userData.InitialDeployments[0].Namespace,
 			}, userData.InitialDeployments[0])).To(Succeed())
 			for _, condition := range userData.InitialDeployments[0].Status.Conditions {
-				if condition.Type == status.DeploymentReadyType {
+				if condition.Type == api.DeploymentReadyType {
 					return condition.Status == corev1.ConditionTrue
 				}
 			}

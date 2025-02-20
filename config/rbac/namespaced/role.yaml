@@ -2,7 +2,6 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  creationTimestamp: null
   name: manager-role
   namespace: default
 rules:
@@ -28,126 +27,20 @@ rules:
 - apiGroups:
   - atlas.mongodb.com
   resources:
+  - atlasbackupcompliancepolicies
   - atlasbackuppolicies
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - atlas.mongodb.com
-  resources:
-  - atlasbackuppolicies/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - atlas.mongodb.com
-  resources:
   - atlasbackupschedules
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - atlas.mongodb.com
-  resources:
-  - atlasbackupschedules/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - atlas.mongodb.com
-  resources:
+  - atlascustomroles
   - atlasdatabaseusers
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - atlas.mongodb.com
-  resources:
-  - atlasdatabaseusers/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - atlas.mongodb.com
-  resources:
   - atlasdatafederations
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - atlas.mongodb.com
-  resources:
-  - atlasdatafederations/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - atlas.mongodb.com
-  resources:
   - atlasdeployments
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - atlas.mongodb.com
-  resources:
-  - atlasdeployments/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - atlas.mongodb.com
-  resources:
+  - atlasfederatedauths
+  - atlasipaccesslists
+  - atlasprivateendpoints
   - atlasprojects
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - atlas.mongodb.com
-  resources:
-  - atlasprojects/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - atlas.mongodb.com
-  resources:
+  - atlassearchindexconfigs
+  - atlasstreamconnections
+  - atlasstreaminstances
   - atlasteams
   verbs:
   - create
@@ -160,8 +53,27 @@ rules:
 - apiGroups:
   - atlas.mongodb.com
   resources:
+  - atlasbackuppolicies/status
+  - atlasbackupschedules/status
+  - atlascustomroles/status
+  - atlasdatabaseusers/status
+  - atlasdatafederations/status
+  - atlasdeployments/status
+  - atlasfederatedauths/status
+  - atlasipaccesslists/status
+  - atlasprivateendpoints/status
+  - atlasprojects/status
+  - atlassearchindexconfigs/status
+  - atlasstreamconnections/status
+  - atlasstreaminstances/status
   - atlasteams/status
   verbs:
   - get
   - patch
+  - update
+- apiGroups:
+  - atlas.mongodb.com
+  resources:
+  - atlasipaccesslists/finalizers
+  verbs:
   - update

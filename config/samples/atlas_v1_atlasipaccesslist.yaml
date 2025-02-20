@@ -1,0 +1,13 @@
+apiVersion: atlas.mongodb.com/v1
+kind: AtlasIPAccessList
+metadata:
+  labels:
+    app.kubernetes.io/name: mongodb-atlas-kubernetes
+  name: atlasipaccesslist-sample
+spec:
+  projectRef:
+    name: my-project
+  entries:
+    - cidrBlock: 192.168.1.0/24
+    - ipAddress: 10.0.0.1
+      deleteAfterDate: 2025-01-20T23:59:59+02:00

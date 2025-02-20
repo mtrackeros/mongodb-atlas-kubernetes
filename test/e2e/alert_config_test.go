@@ -6,24 +6,24 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/types"
-
+	"go.mongodb.org/atlas-sdk/v20231115008/admin"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
-	v1 "github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/common"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/status"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/controller/connectionsecret"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/toptr"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/api/atlas"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/data"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/model"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api"
+	akov2 "github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1/common"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/compare"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/controller/connectionsecret"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/pointer"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/api/atlas"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/data"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/model"
 )
 
-var _ = Describe("Alert configuration tests", Label("alert-config"), func() {
+var _ = Describe("Alert configuration tests", Label("alert-config", "alert-configs-table"), func() {
 	var testData *model.TestDataProvider
 
 	_ = AfterEach(func() {
@@ -39,7 +39,7 @@ var _ = Describe("Alert configuration tests", Label("alert-config"), func() {
 	})
 
 	DescribeTable("Namespaced operators working only with its own namespace with different configuration",
-		func(test *model.TestDataProvider, alertConfigurations []v1.AlertConfiguration) {
+		func(test *model.TestDataProvider, alertConfigurations []akov2.AlertConfiguration) {
 			testData = test
 			actions.ProjectCreationFlow(test)
 			alertConfigFlow(test, alertConfigurations)
@@ -51,21 +51,21 @@ var _ = Describe("Alert configuration tests", Label("alert-config"), func() {
 				40000,
 				[]func(*model.TestDataProvider){},
 			).WithProject(data.DefaultProject()),
-			[]v1.AlertConfiguration{
+			[]akov2.AlertConfiguration{
 				{
 					EventTypeName: "REPLICATION_OPLOG_WINDOW_RUNNING_OUT",
 					Enabled:       true,
-					Threshold: &v1.Threshold{
+					Threshold: &akov2.Threshold{
 						Operator:  "LESS_THAN",
 						Threshold: "1",
 						Units:     "HOURS",
 					},
-					Notifications: []v1.Notification{
+					Notifications: []akov2.Notification{
 						{
 							IntervalMin:  5,
-							DelayMin:     toptr.MakePtr(5),
-							EmailEnabled: toptr.MakePtr(true),
-							SMSEnabled:   toptr.MakePtr(false),
+							DelayMin:     pointer.MakePtr(5),
+							EmailEnabled: pointer.MakePtr(true),
+							SMSEnabled:   pointer.MakePtr(false),
 							Roles: []string{
 								"GROUP_OWNER",
 							},
@@ -76,17 +76,17 @@ var _ = Describe("Alert configuration tests", Label("alert-config"), func() {
 				{
 					EventTypeName: "REPLICATION_OPLOG_WINDOW_RUNNING_OUT",
 					Enabled:       true,
-					Threshold: &v1.Threshold{
+					Threshold: &akov2.Threshold{
 						Operator:  "LESS_THAN",
-						Threshold: "1",
+						Threshold: "2", // make it a different alert config
 						Units:     "HOURS",
 					},
-					Notifications: []v1.Notification{
+					Notifications: []akov2.Notification{
 						{
 							IntervalMin:  5,
-							DelayMin:     toptr.MakePtr(5),
-							EmailEnabled: toptr.MakePtr(true),
-							SMSEnabled:   toptr.MakePtr(false),
+							DelayMin:     pointer.MakePtr(5),
+							EmailEnabled: pointer.MakePtr(true),
+							SMSEnabled:   pointer.MakePtr(false),
 							Roles: []string{
 								"GROUP_OWNER",
 							},
@@ -103,16 +103,16 @@ var _ = Describe("Alert configuration tests", Label("alert-config"), func() {
 				40000,
 				[]func(*model.TestDataProvider){},
 			).WithProject(data.DefaultProject()),
-			[]v1.AlertConfiguration{
+			[]akov2.AlertConfiguration{
 				{
 					EventTypeName: "JOINED_GROUP",
 					Enabled:       true,
-					Notifications: []v1.Notification{
+					Notifications: []akov2.Notification{
 						{
 							IntervalMin:  60,
-							DelayMin:     toptr.MakePtr(0),
-							EmailEnabled: toptr.MakePtr(true),
-							SMSEnabled:   toptr.MakePtr(false),
+							DelayMin:     pointer.MakePtr(0),
+							EmailEnabled: pointer.MakePtr(true),
+							SMSEnabled:   pointer.MakePtr(false),
 							Roles: []string{
 								"GROUP_OWNER",
 							},
@@ -123,17 +123,55 @@ var _ = Describe("Alert configuration tests", Label("alert-config"), func() {
 				{
 					EventTypeName: "REPLICATION_OPLOG_WINDOW_RUNNING_OUT",
 					Enabled:       true,
-					Threshold: &v1.Threshold{
+					Threshold: &akov2.Threshold{
 						Operator:  "LESS_THAN",
 						Threshold: "1",
 						Units:     "HOURS",
 					},
-					Notifications: []v1.Notification{
+					Notifications: []akov2.Notification{
 						{
 							IntervalMin:  5,
-							DelayMin:     toptr.MakePtr(5),
-							EmailEnabled: toptr.MakePtr(true),
-							SMSEnabled:   toptr.MakePtr(false),
+							DelayMin:     pointer.MakePtr(5),
+							EmailEnabled: pointer.MakePtr(true),
+							SMSEnabled:   pointer.MakePtr(false),
+							Roles: []string{
+								"GROUP_OWNER",
+							},
+							TypeName: "GROUP",
+						},
+					},
+				},
+			},
+		),
+		Entry("Test[alert-configs-3]: Project with an alert config containing a matcher", Label("alert-configs-3"),
+			model.DataProvider(
+				"alert-configs-3",
+				model.NewEmptyAtlasKeyType().UseDefaultFullAccess(),
+				40000,
+				[]func(*model.TestDataProvider){},
+			).WithProject(data.DefaultProject()),
+			[]akov2.AlertConfiguration{
+				{
+					EventTypeName: "REPLICATION_OPLOG_WINDOW_RUNNING_OUT",
+					Enabled:       true,
+					Threshold: &akov2.Threshold{
+						Operator:  "LESS_THAN",
+						Threshold: "1",
+						Units:     "HOURS",
+					},
+					Matchers: []akov2.Matcher{
+						{
+							FieldName: "CLUSTER_NAME",
+							Operator:  "STARTS_WITH",
+							Value:     "ako_e2e_test_",
+						},
+					},
+					Notifications: []akov2.Notification{
+						{
+							IntervalMin:  5,
+							DelayMin:     pointer.MakePtr(5),
+							EmailEnabled: pointer.MakePtr(true),
+							SMSEnabled:   pointer.MakePtr(false),
 							Roles: []string{
 								"GROUP_OWNER",
 							},
@@ -147,55 +185,105 @@ var _ = Describe("Alert configuration tests", Label("alert-config"), func() {
 
 })
 
-func alertConfigFlow(userData *model.TestDataProvider, alertConfigs []v1.AlertConfiguration) {
-	Expect(userData.K8SClient.Get(userData.Context, types.NamespacedName{Name: userData.Project.Name,
-		Namespace: userData.Project.Namespace}, userData.Project)).Should(Succeed())
-	userData.Project.Spec.AlertConfigurationSyncEnabled = true
-	userData.Project.Spec.AlertConfigurations = append(userData.Project.Spec.AlertConfigurations, alertConfigs...)
-	Expect(userData.K8SClient.Update(userData.Context, userData.Project)).Should(Succeed())
+func alertConfigFlow(userData *model.TestDataProvider, alertConfigs []akov2.AlertConfiguration) {
+	By("Enable Alert Config Sync on Atlas Project", func() {
+		Expect(userData.K8SClient.Get(userData.Context, types.NamespacedName{Name: userData.Project.Name,
+			Namespace: userData.Project.Namespace}, userData.Project)).Should(Succeed())
+		userData.Project.Spec.AlertConfigurationSyncEnabled = true
+		userData.Project.Spec.AlertConfigurations = append(userData.Project.Spec.AlertConfigurations, alertConfigs...)
+		Expect(userData.K8SClient.Update(userData.Context, userData.Project)).Should(Succeed())
+	})
 
-	actions.WaitForConditionsToBecomeTrue(userData, status.AlertConfigurationReadyType, status.ReadyType)
-	Expect(userData.K8SClient.Get(userData.Context, types.NamespacedName{Name: userData.Project.Name, Namespace: userData.Project.Namespace}, userData.Project)).Should(Succeed())
-	Expect(userData.Project.Status.AlertConfigurations).Should(HaveLen(len(alertConfigs)))
+	By("Wait for Alert Configurations to activate", func() {
+		actions.WaitForConditionsToBecomeTrue(userData, api.AlertConfigurationReadyType, api.ReadyType)
+		Expect(userData.K8SClient.Get(userData.Context, types.NamespacedName{Name: userData.Project.Name, Namespace: userData.Project.Namespace}, userData.Project)).Should(Succeed())
+		Expect(userData.Project.Status.AlertConfigurations).Should(HaveLen(len(alertConfigs)))
+	})
 
-	atlasClient := atlas.GetClientOrFail()
-	alertConfigurations, _, err := atlasClient.Client.AlertConfigurations.List(userData.Context, userData.Project.ID(), nil)
-	Expect(err).ShouldNot(HaveOccurred())
-	Expect(alertConfigurations).Should(HaveLen(len(alertConfigs)), "Atlas alert configurations", alertConfigurations)
+	By("Check alert configurations have no errors and match configured configs", func() {
+		var err error
+		alertConfigurations, _, err := atlasClient.Client.AlertConfigurationsApi.
+			ListAlertConfigurations(userData.Context, userData.Project.ID()).
+			Execute()
+		By("No errors listing alert configs", func() {
+			Expect(err).ShouldNot(HaveOccurred())
+		})
+		By("Check config counts match configured count", func() {
+			Expect(alertConfigurations.GetTotalCount()).Should(Equal(len(alertConfigs)), "Atlas alert configurations", alertConfigurations)
+		})
 
-	atlasIDList := make([]string, 0, len(alertConfigurations))
-	for _, alertConfig := range alertConfigurations {
-		atlasIDList = append(atlasIDList, alertConfig.ID)
-	}
-	statusIDList := make([]string, 0, len(userData.Project.Status.AlertConfigurations))
-	for _, alertConfig := range userData.Project.Status.AlertConfigurations {
-		statusIDList = append(statusIDList, alertConfig.ID)
-	}
-	Expect(util.IsEqualWithoutOrder(statusIDList, atlasIDList)).Should(BeTrue())
+		By("ID sets in Atlas matches the status IDs", func() {
+			atlasIDList := make([]string, 0, alertConfigurations.GetTotalCount())
+			for _, alertConfig := range alertConfigurations.GetResults() {
+				atlasIDList = append(atlasIDList, alertConfig.GetId())
+			}
+			statusIDList := make([]string, 0, len(userData.Project.Status.AlertConfigurations))
+			for _, alertConfig := range userData.Project.Status.AlertConfigurations {
+				statusIDList = append(statusIDList, alertConfig.ID)
+			}
+			Expect(compare.IsEqualWithoutOrder(statusIDList, atlasIDList)).Should(BeTrue())
+		})
+
+		By("Each Atlas alert config matches its Kubernetes config", func() {
+			atlasConvertedSpecs := []*admin.GroupAlertsConfig{}
+			for i := range alertConfigs {
+				akoConfig, err := alertConfigs[i].ToAtlas()
+				Expect(err).ToNot(HaveOccurred())
+				atlasConvertedSpecs = append(atlasConvertedSpecs, akoConfig)
+			}
+			atlasConfigs := alertConfigurations.GetResults()
+			for _, atlasConfig := range atlasConfigs {
+				normalizedAtlasConfig := normalizeAtlasAlertConfig(atlasConfig)
+				Expect(atlasConvertedSpecs).To(ContainElement(&normalizedAtlasConfig))
+			}
+		})
+	})
 }
 
-var _ = Describe("Alert configuration with secrets test", Label("alert-config"), func() {
+func normalizeAtlasAlertConfig(atlasConfig admin.GroupAlertsConfig) admin.GroupAlertsConfig {
+	atlasConfig.Id = nil
+	atlasConfig.GroupId = nil
+	atlasConfig.Created = nil
+	atlasConfig.Updated = nil
+	atlasConfig.Links = nil
+
+	notifications := atlasConfig.GetNotifications()
+	for j := range notifications {
+		notifications[j].NotifierId = nil
+		notifications[j].DatadogApiKey = pointer.MakePtr("")
+		notifications[j].OpsGenieApiKey = pointer.MakePtr("")
+		notifications[j].ServiceKey = pointer.MakePtr("")
+		notifications[j].ApiToken = pointer.MakePtr("")
+		notifications[j].VictorOpsApiKey = pointer.MakePtr("")
+		notifications[j].VictorOpsRoutingKey = pointer.MakePtr("")
+	}
+	atlasConfig.SetNotifications(notifications)
+
+	return atlasConfig
+}
+
+var _ = Describe("Alert configuration with secrets test", Label("alert-config", "alert-config-datadog"), func() {
 	var testData *model.TestDataProvider
 
 	_ = BeforeEach(func() {
 		Expect(os.Getenv("DATADOG_KEY")).ShouldNot(BeEmpty(), "Please setup DATADOG_KEY environment variable")
 	})
 
-	alertConfigs := []v1.AlertConfiguration{
+	alertConfigs := []akov2.AlertConfiguration{
 		{
 			EventTypeName: "REPLICATION_OPLOG_WINDOW_RUNNING_OUT",
 			Enabled:       true,
-			Threshold: &v1.Threshold{
+			Threshold: &akov2.Threshold{
 				Operator:  "LESS_THAN",
 				Threshold: "1",
 				Units:     "HOURS",
 			},
-			Notifications: []v1.Notification{
+			Notifications: []akov2.Notification{
 				{
 					IntervalMin:  5,
-					DelayMin:     toptr.MakePtr(5),
-					EmailEnabled: toptr.MakePtr(true),
-					SMSEnabled:   toptr.MakePtr(false),
+					DelayMin:     pointer.MakePtr(5),
+					EmailEnabled: pointer.MakePtr(true),
+					SMSEnabled:   pointer.MakePtr(false),
 					Roles: []string{
 						"GROUP_OWNER",
 					},
@@ -264,10 +352,12 @@ var _ = Describe("Alert configuration with secrets test", Label("alert-config"),
 		By("Verifying the Datadog config in Atlas", func() {
 			atlasClient := atlas.GetClientOrFail()
 			Eventually(func(g Gomega) {
-				atlasAlertConfigs, _, err := atlasClient.Client.AlertConfigurations.List(testData.Context, testData.Project.ID(), nil)
+				atlasAlertConfigs, _, err := atlasClient.Client.AlertConfigurationsApi.
+					ListAlertConfigurations(testData.Context, testData.Project.ID()).
+					Execute()
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(atlasAlertConfigs).Should(HaveLen(len(alertConfigs)))
-				g.Expect(atlasAlertConfigs[0].Notifications[0].DatadogAPIKey).ShouldNot(BeEmpty())
+				g.Expect(atlasAlertConfigs.GetTotalCount()).Should(Equal(len(alertConfigs)))
+				g.Expect(atlasAlertConfigs.GetResults()[0].GetNotifications()[0].GetDatadogApiKey()).ShouldNot(BeEmpty())
 			}).WithPolling(10 * time.Second).WithTimeout(5 * time.Minute).Should(Succeed())
 		})
 	})

@@ -6,10 +6,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions/deploy"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/data"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/model"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions/deploy"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/data"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/model"
 )
 
 var _ = Describe("Configuration namespaced. Deploy deployment", Label("deployment-ns"), func() {
@@ -140,7 +140,7 @@ var _ = Describe("Configuration namespaced. Deploy deployment", Label("deploymen
 					actions.DeleteFirstUser,
 				},
 			).WithProject(data.DefaultProject()).
-				WithInitialDeployments(data.CreateBasicFreeDeployment("basic-free-deployment")).
+				WithInitialDeployments(data.CreateFreeAdvancedDeployment("basic-free-deployment")).
 				WithUsers(data.BasicUser("user", "user1", data.WithSecretRef("dbuser-secret"), data.WithAdminRole())),
 		),
 		Entry("Free - Users can use M0, global", Label("ns-global-key-m0"),
@@ -152,17 +152,17 @@ var _ = Describe("Configuration namespaced. Deploy deployment", Label("deploymen
 					actions.DeleteFirstUser,
 				},
 			).WithProject(data.DefaultProject()).
-				WithInitialDeployments(data.CreateBasicFreeDeployment("basic-free-deployment")).
+				WithInitialDeployments(data.CreateFreeAdvancedDeployment("basic-free-deployment")).
 				WithUsers(data.BasicUser("user", "user1", data.WithSecretRef("dbuser-secret"), data.WithAdminRole())),
 		),
 	)
 })
 
 func mainCycle(testData *model.TestDataProvider) {
-	mgr := actions.PrepareOperatorConfigurations(testData)
+	r := actions.PrepareOperatorConfigurations(testData)
 	ctx := context.Background()
 	go func(ctx context.Context) {
-		err := mgr.Start(ctx)
+		err := r.Start(ctx)
 		Expect(err).NotTo(HaveOccurred())
 	}(ctx)
 

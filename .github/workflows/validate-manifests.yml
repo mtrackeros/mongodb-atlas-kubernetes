@@ -1,0 +1,19 @@
+name: Validate Manifests
+
+on:
+  workflow_call:
+
+jobs:
+  validate-manifests:
+    name: Validate Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{github.event.pull_request.head.sha}}
+      - name: Install devbox
+        uses: jetify-com/devbox-install-action@v0.12.0
+        with:
+          enable-cache: 'true'
+      - name: Run testing
+        run: devbox run -- 'make validate-manifests'

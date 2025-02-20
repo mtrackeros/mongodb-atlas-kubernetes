@@ -21,48 +21,38 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/controller/atlasdatafederation"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/helper"
-
-	"sigs.k8s.io/controller-runtime/pkg/client/config"
-
 	"github.com/go-logr/zapr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.mongodb.org/atlas/mongodbatlas"
+	"go.mongodb.org/atlas-sdk/v20231115008/admin"
+	adminv20241113001 "go.mongodb.org/atlas-sdk/v20241113001/admin"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
-	ctrzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
-
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	ctrzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	mdbv1 "github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/controller/atlas"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/controller/atlasdatabaseuser"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/controller/atlasdeployment"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/controller/atlasproject"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/controller/watch"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/httputil"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/kube"
-	// +kubebuilder:scaffold:imports
+	akov2 "github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/controller/atlas"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/operator"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/control"
 )
 
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 
 const (
+	atlasDomainDefault  = "https://cloud-qa.mongodb.com/"
 	EventuallyTimeout   = 60 * time.Second
 	ConsistentlyTimeout = 1 * time.Second
 	PollingInterval     = 10 * time.Second
@@ -73,30 +63,28 @@ var (
 	testEnv *envtest.Environment
 
 	// These variables are initialized once per each node
-	k8sClient            client.Client
-	atlasClient          *mongodbatlas.Client
-	dataFederationClient *atlasdatafederation.DataFederationServiceOp
-	connection           atlas.Connection
+	k8sClient               client.Client
+	atlasClient             *admin.APIClient
+	atlasClientv20241113001 *adminv20241113001.APIClient
 
 	// These variables are per each test and are changed by each BeforeRun
 	namespace         corev1.Namespace
 	cfg               *rest.Config
 	managerCancelFunc context.CancelFunc
-	atlasDomain       string
+	orgID             string
+	publicKey         string
+	privateKey        string
+	atlasDomain       = atlasDomainDefault
 )
 
-func init() {
-	if atlasDomain = os.Getenv("ATLAS_DOMAIN"); atlasDomain == "" {
-		atlasDomain = "https://cloud-qa.mongodb.com/"
-	}
-}
-
 func TestAPIs(t *testing.T) {
-	if !helper.Enabled("AKO_INT_TEST") {
-		t.Skip("Skipping int tests, AKO_INT_TEST is not set")
-	}
+	control.SkipTestUnless(t, "AKO_INT_TEST")
+
+	utilruntime.Must(scheme.AddToScheme(scheme.Scheme))
+	utilruntime.Must(akov2.AddToScheme(scheme.Scheme))
+
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Atlas Operator Integration Test Suite")
+	RunSpecs(t, "Atlas Operator Namespaced Integration Test Suite")
 }
 
 // SynchronizedBeforeSuite uses the parallel "with singleton" pattern described by ginkgo
@@ -104,61 +92,80 @@ func TestAPIs(t *testing.T) {
 // The first function starts the envtest (done only once by the 1st node). The second function is called on each of
 // the ginkgo nodes and initializes all reconcilers and clients that will be used by the test.
 var _ = SynchronizedBeforeSuite(func() []byte {
-	if !helper.Enabled("AKO_INT_TEST") {
+	if !control.Enabled("AKO_INT_TEST") {
 		fmt.Println("Skipping int SynchronizedBeforeSuite, AKO_INT_TEST is not set")
 		return nil
 	}
-	By("bootstrapping test environment")
 
-	testEnv = &envtest.Environment{
-		CRDDirectoryPaths: []string{filepath.Join("..", "..", "config", "crd", "bases")},
-	}
-
-	cfg, err := testEnv.Start()
-	Expect(err).ToNot(HaveOccurred())
-	Expect(cfg).ToNot(BeNil())
+	By("Validating configuration data is available", func() {
+		Expect(os.Getenv("ATLAS_ORG_ID")).ToNot(BeEmpty())
+		Expect(os.Getenv("ATLAS_PUBLIC_KEY")).ToNot(BeEmpty())
+		Expect(os.Getenv("ATLAS_PRIVATE_KEY")).ToNot(BeEmpty())
+	})
 
 	var b bytes.Buffer
-	e := gob.NewEncoder(&b)
-	err = e.Encode(*cfg)
-	Expect(err).NotTo(HaveOccurred())
 
-	fmt.Printf("Api Server is listening on %s\n", cfg.Host)
+	By("Bootstrapping test environment", func() {
+		testEnv = &envtest.Environment{
+			CRDDirectoryPaths: []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		}
+
+		cfg, err := testEnv.Start()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(cfg).ToNot(BeNil())
+
+		e := gob.NewEncoder(&b)
+		err = e.Encode(*cfg)
+		Expect(err).ToNot(HaveOccurred())
+
+		GinkgoWriter.Printf("Api Server is listening on %s\n", cfg.Host)
+	})
+
 	return b.Bytes()
 }, func(data []byte) {
-	if os.Getenv("USE_EXISTING_CLUSTER") != "" {
-		var err error
-		// For the existing deployment we read the kubeconfig
-		cfg, err = config.GetConfig()
-		if err != nil {
-			panic("Failed to read the config for existing deployment")
-		}
-	} else {
+	By("Setup test dependencies", func() {
 		d := gob.NewDecoder(bytes.NewReader(data))
 		err := d.Decode(&cfg)
-		Expect(err).NotTo(HaveOccurred())
-	}
+		Expect(err).ToNot(HaveOccurred())
 
-	err := mdbv1.AddToScheme(scheme.Scheme)
-	Expect(err).NotTo(HaveOccurred())
+		orgID, publicKey, privateKey = os.Getenv("ATLAS_ORG_ID"), os.Getenv("ATLAS_PUBLIC_KEY"), os.Getenv("ATLAS_PRIVATE_KEY")
 
-	// It's recommended to construct the client directly for tests
-	// see https://github.com/kubernetes-sigs/controller-runtime/issues/343#issuecomment-469435686
-	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
-	Expect(err).NotTo(HaveOccurred())
-	Expect(k8sClient).ToNot(BeNil())
+		if domain, found := os.LookupEnv("ATLAS_DOMAIN"); found && domain != "" {
+			atlasDomain = domain
+		}
 
-	atlasClient, connection = prepareAtlasClient()
-	defaultTimeouts()
+		// shallow copy global config
+		ginkgoCfg := *cfg
+		ginkgoCfg.UserAgent = "ginkgo"
 
-	dataFederationClient = atlasdatafederation.NewClient(*atlasClient, atlasDomain)
+		// It's recommended to construct the client directly for tests
+		// see https://github.com/kubernetes-sigs/controller-runtime/issues/343#issuecomment-469435686
+		k8sClient, err = client.New(&ginkgoCfg, client.Options{Scheme: scheme.Scheme})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(k8sClient).ToNot(BeNil())
+
+		atlasClient, err = atlas.NewClient(atlasDomain, publicKey, privateKey)
+		Expect(err).ToNot(HaveOccurred())
+
+		atlasClientv20241113001, err = adminv20241113001.NewClient(
+			adminv20241113001.UseBaseURL(atlasDomain),
+			adminv20241113001.UseDigestAuth(publicKey, privateKey),
+		)
+		Expect(err).ToNot(HaveOccurred())
+
+		defaultTimeouts()
+	})
 })
 
-var _ = SynchronizedAfterSuite(func() {
-}, func() {
-	By("tearing down the test environment")
-	err := testEnv.Stop()
-	Expect(err).ToNot(HaveOccurred())
+var _ = SynchronizedAfterSuite(func() {}, func() {
+	By("Tearing down the test environment", func() {
+		err := testEnv.Stop()
+		Expect(err).ToNot(HaveOccurred())
+	})
+})
+
+var _ = ReportAfterSuite("Ensure test suite was not empty", func(r Report) {
+	Expect(r.PreRunStats.SpecsThatWillRun > 0).To(BeTrue(), "Suite must run at least 1 test")
 })
 
 func defaultTimeouts() {
@@ -167,30 +174,11 @@ func defaultTimeouts() {
 	SetDefaultConsistentlyDuration(ConsistentlyTimeout)
 }
 
-func prepareAtlasClient() (*mongodbatlas.Client, atlas.Connection) {
-	orgID, publicKey, privateKey := os.Getenv("ATLAS_ORG_ID"), os.Getenv("ATLAS_PUBLIC_KEY"), os.Getenv("ATLAS_PRIVATE_KEY")
-	if orgID == "" || publicKey == "" || privateKey == "" {
-		Fail(`All of the "ATLAS_ORG_ID", "ATLAS_PUBLIC_KEY", and "ATLAS_PRIVATE_KEY" environment variables must be set!`)
-	}
-	withDigest := httputil.Digest(publicKey, privateKey)
-	httpClient, err := httputil.DecorateClient(&http.Client{Transport: http.DefaultTransport}, withDigest)
-	Expect(err).ToNot(HaveOccurred())
-	aClient, err := mongodbatlas.New(httpClient, mongodbatlas.SetBaseURL(atlasDomain))
-	Expect(err).ToNot(HaveOccurred())
-
-	return aClient, atlas.Connection{
-		OrgID:      orgID,
-		PublicKey:  publicKey,
-		PrivateKey: privateKey,
-	}
-}
-
 // prepareControllers is a common function used by all the tests that creates the namespace and registers all the
 // reconcilers there. Each of them listens only this specific namespace only, otherwise it's not possible to run in parallel
 func prepareControllers(deletionProtection bool) (*corev1.Namespace, context.CancelFunc) {
-	err := mdbv1.AddToScheme(scheme.Scheme)
-	Expect(err).NotTo(HaveOccurred())
-
+	var ctx context.Context
+	ctx, managerCancelFunc = context.WithCancel(context.Background())
 	namespace = corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:    "test",
@@ -198,93 +186,71 @@ func prepareControllers(deletionProtection bool) (*corev1.Namespace, context.Can
 		},
 	}
 
-	By("Creating the namespace " + namespace.Name)
-	Expect(k8sClient.Create(context.Background(), &namespace)).ToNot(HaveOccurred())
+	By("Creating the namespace " + namespace.GenerateName + "...")
+	Expect(k8sClient.Create(ctx, &namespace)).ToNot(HaveOccurred())
+	Expect(namespace.Name).ToNot(BeEmpty())
+	GinkgoWriter.Printf("Generated namespace %q\n", namespace.Name)
 
-	// +kubebuilder:scaffold:scheme
 	logger := ctrzap.NewRaw(ctrzap.UseDevMode(true), ctrzap.WriteTo(GinkgoWriter), ctrzap.StacktraceLevel(zap.ErrorLevel))
-
 	ctrl.SetLogger(zapr.NewLogger(logger))
 
-	// Note on the syncPeriod - decreasing this to a smaller time allows to test its work for the long-running tests
-	// (deployments, database users). The prod value is much higher
-	syncPeriod := time.Minute * 30
-	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
-		Scheme:             scheme.Scheme,
-		MetricsBindAddress: "0",
-		SyncPeriod:         &syncPeriod,
-	})
+	// shallow copy global config
+	managerCfg := *cfg
+	managerCfg.UserAgent = "AKO"
+	mgr, err := operator.NewBuilder(operator.ManagerProviderFunc(ctrl.NewManager), scheme.Scheme, 5*time.Minute).
+		WithConfig(&managerCfg).
+		WithNamespaces(namespace.Name).
+		WithLogger(logger).
+		WithAtlasDomain(atlasDomain).
+		WithSyncPeriod(30 * time.Minute).
+		WithAPISecret(client.ObjectKey{Name: "atlas-operator-api-key", Namespace: namespace.Name}).
+		WithDeletionProtection(deletionProtection).
+		WithSkipNameValidation(true). // this is needed as this starts multiple controllers concurrently
+		Build(ctx)
 	Expect(err).ToNot(HaveOccurred())
-
-	// globalPredicates should be used for general controller Predicates
-	// that should be applied to all controllers in order to limit the
-	// resources they receive events for.
-	globalPredicates := []predicate.Predicate{
-		watch.CommonPredicates(), // ignore spurious changes. status changes etc.
-		watch.SelectNamespacesPredicate(map[string]bool{ // select only desired namespaces
-			namespace.Name: true,
-		}),
-	}
-
-	err = (&atlasproject.AtlasProjectReconciler{
-		Client:                      k8sManager.GetClient(),
-		Log:                         logger.Named("controllers").Named("AtlasProject").Sugar(),
-		AtlasDomain:                 atlasDomain,
-		ResourceWatcher:             watch.NewResourceWatcher(),
-		GlobalAPISecret:             kube.ObjectKey(namespace.Name, "atlas-operator-api-key"),
-		GlobalPredicates:            globalPredicates,
-		EventRecorder:               k8sManager.GetEventRecorderFor("AtlasProject"),
-		ObjectDeletionProtection:    deletionProtection,
-		SubObjectDeletionProtection: deletionProtection,
-	}).SetupWithManager(k8sManager)
-	Expect(err).ToNot(HaveOccurred())
-
-	err = (&atlasdeployment.AtlasDeploymentReconciler{
-		Client:                      k8sManager.GetClient(),
-		Log:                         logger.Named("controllers").Named("AtlasDeployment").Sugar(),
-		AtlasDomain:                 atlasDomain,
-		ResourceWatcher:             watch.NewResourceWatcher(),
-		GlobalAPISecret:             kube.ObjectKey(namespace.Name, "atlas-operator-api-key"),
-		GlobalPredicates:            globalPredicates,
-		EventRecorder:               k8sManager.GetEventRecorderFor("AtlasDeployment"),
-		ObjectDeletionProtection:    deletionProtection,
-		SubObjectDeletionProtection: deletionProtection,
-	}).SetupWithManager(k8sManager)
-	Expect(err).ToNot(HaveOccurred())
-
-	err = (&atlasdatabaseuser.AtlasDatabaseUserReconciler{
-		Client:                      k8sManager.GetClient(),
-		Log:                         logger.Named("controllers").Named("AtlasDatabaseUser").Sugar(),
-		AtlasDomain:                 atlasDomain,
-		EventRecorder:               k8sManager.GetEventRecorderFor("AtlasDatabaseUser"),
-		ResourceWatcher:             watch.NewResourceWatcher(),
-		GlobalAPISecret:             kube.ObjectKey(namespace.Name, "atlas-operator-api-key"),
-		GlobalPredicates:            globalPredicates,
-		ObjectDeletionProtection:    deletionProtection,
-		SubObjectDeletionProtection: deletionProtection,
-	}).SetupWithManager(k8sManager)
-	Expect(err).ToNot(HaveOccurred())
-
-	err = (&atlasdatafederation.AtlasDataFederationReconciler{
-		Client:                      k8sManager.GetClient(),
-		Log:                         logger.Named("controllers").Named("AtlasDataFederation").Sugar(),
-		AtlasDomain:                 atlasDomain,
-		EventRecorder:               k8sManager.GetEventRecorderFor("AtlasDatabaseUser"),
-		ResourceWatcher:             watch.NewResourceWatcher(),
-		GlobalAPISecret:             kube.ObjectKey(namespace.Name, "atlas-operator-api-key"),
-		GlobalPredicates:            globalPredicates,
-		ObjectDeletionProtection:    deletionProtection,
-		SubObjectDeletionProtection: deletionProtection,
-	}).SetupWithManager(k8sManager)
-	Expect(err).ToNot(HaveOccurred())
-
-	By("Starting controllers")
-
-	var ctx context.Context
-	ctx, managerCancelFunc = context.WithCancel(context.Background())
 
 	go func() {
-		err = k8sManager.Start(ctx)
+		err = mgr.Start(ctx)
+		Expect(err).ToNot(HaveOccurred())
+	}()
+
+	return &namespace, managerCancelFunc
+}
+
+func prepareControllersWithSyncPeriod(deletionProtection bool, syncPeriod time.Duration) (*corev1.Namespace, context.CancelFunc) {
+	var ctx context.Context
+	ctx, managerCancelFunc = context.WithCancel(context.Background())
+	namespace = corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:    "test",
+			GenerateName: "test",
+		},
+	}
+
+	By("Creating the namespace " + namespace.GenerateName + "...")
+	Expect(k8sClient.Create(ctx, &namespace)).ToNot(HaveOccurred())
+	Expect(namespace.Name).ToNot(BeEmpty())
+	GinkgoWriter.Printf("Generated namespace %q\n", namespace.Name)
+
+	logger := ctrzap.NewRaw(ctrzap.UseDevMode(true), ctrzap.WriteTo(GinkgoWriter), ctrzap.StacktraceLevel(zap.ErrorLevel))
+	ctrl.SetLogger(zapr.NewLogger(logger))
+
+	// shallow copy global config
+	managerCfg := *cfg
+	managerCfg.UserAgent = "AKO"
+	mgr, err := operator.NewBuilder(operator.ManagerProviderFunc(ctrl.NewManager), scheme.Scheme, 5*time.Minute).
+		WithConfig(&managerCfg).
+		WithNamespaces(namespace.Name).
+		WithLogger(logger).
+		WithAtlasDomain(atlasDomain).
+		WithSyncPeriod(syncPeriod).
+		WithAPISecret(client.ObjectKey{Name: "atlas-operator-api-key", Namespace: namespace.Name}).
+		WithDeletionProtection(deletionProtection).
+		Build(ctx)
+	Expect(err).ToNot(HaveOccurred())
+
+	go func() {
+		err = mgr.Start(ctx)
 		Expect(err).ToNot(HaveOccurred())
 	}()
 
@@ -298,4 +264,12 @@ func removeControllersAndNamespace() {
 	By("Removing the namespace " + namespace.Name)
 	err := k8sClient.Delete(context.Background(), &namespace)
 	Expect(err).ToNot(HaveOccurred())
+}
+
+func secretData() map[string]string {
+	return map[string]string{
+		OrgID:         orgID,
+		PublicAPIKey:  publicKey,
+		PrivateAPIKey: privateKey,
+	}
 }

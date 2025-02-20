@@ -23,9 +23,10 @@ export INPUT_ENV=dev
 
 if [[ "${build}" == "true" ]]; then
     ./.github/actions/gen-install-scripts/entrypoint.sh
-    awk '{gsub(/cloud.mongodb.com/, "cloud-qa.mongodb.com", $0); print}' bundle/manifests/mongodb-atlas-kubernetes.clusterserviceversion.yaml > tmp && mv tmp bundle/manifests/mongodb-atlas-kubernetes.clusterserviceversion.yaml
+    awk '{gsub(/cloud.mongodb.com/, "cloud-qa.mongodb.com", $0); print}' bundle/manifests/mongodb-atlas-kubernetes.clusterserviceversion.yaml > yaml.tmp && mv yaml.tmp bundle/manifests/mongodb-atlas-kubernetes.clusterserviceversion.yaml
 
-    docker build -t "${image}" .
+    make all-platforms
+    docker build -f fast.Dockerfile -t "${image}" .
     docker push "${image}"
 
     #bundles
@@ -35,9 +36,9 @@ fi
 
 kubectl apply -f deploy/crds
 
-export MCLI_OPS_MANAGER_URL="https://cloud-qa.mongodb.com/"
-export MCLI_PUBLIC_API_KEY="${public_key}"
-export MCLI_PRIVATE_API_KEY="${private_key}"
-export MCLI_ORG_ID="${org_id}"
+export MCLI_OPS_MANAGER_URL="${MCLI_OPS_MANAGER_URL:-https://cloud-qa.mongodb.com/}"
+export MCLI_PUBLIC_API_KEY="${MCLI_PUBLIC_API_KEY:-$public_key}"
+export MCLI_PRIVATE_API_KEY="${MCLI_PRIVATE_API_KEY:-$private_key}"
+export MCLI_ORG_ID="${MCLI_ORG_ID:-$org_id}"
 export IMAGE_URL="${image}" #for helm chart
-AKO_E2E_TEST=1 ginkgo --label-filter="${focus_key}" --timeout 120m -v test/e2e/
+AKO_E2E_TEST=1 ginkgo --race --label-filter="${focus_key}" --timeout 120m -vv test/e2e/

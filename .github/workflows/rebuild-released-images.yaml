@@ -4,43 +4,65 @@ name: Daily build
 on:
   schedule:
     - cron: "0 1 * * 1-5"
-    - cron: "0 3 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      image_repo:
+        type: choice
+        description: "Target image repository for built images"
+        default: mongodb/mongodb-atlas-kubernetes-operator-prerelease
+        required: true
+        options:
+        - mongodb/mongodb-atlas-kubernetes-operator-prerelease
+        - mongodb/mongodb-atlas-kubernetes-operator
+      releases:
+        type: string
+        description: "Custom list of releases to rebuild"
+        default: ""
+        required: false
 
 jobs:
   read-versions:
     name: Read config file 
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.images-matrix.outputs.matrix }}
-      platforms: ${{ steps.images-matrix.outputs.platforms }}
       date: ${{ steps.set-date.outputs.date }}
+      releases: ${{ steps.releases.outputs.releases }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
         with:
           submodules: true
           fetch-depth: 0
-      - name: Read config file (daily-builds.json) 
-        id: images-matrix
-        run: |
-          CONTENT=`cat ./daily-builds.json`
-          CONTENT="${CONTENT//'%'/'%25'}"
-          echo matrix=${CONTENT} >> $GITHUB_OUTPUT
       - name: Set date
         id: set-date
         run: |
           DATE=$(date +'%Y-%m-%d')
           echo date=${DATE} >> $GITHUB_OUTPUT
-  
+      - name: Releases
+        id: releases
+        run: |
+          if [ "${{ github.event.inputs.releases }}" == "" ]; then
+            echo "Computing supported releases..."
+            git fetch --tags
+            echo "releases=$(./scripts/supported-releases.sh)" | tee -a $GITHUB_OUTPUT
+          else
+            echo "Formatting ${{ github.event.inputs.releases }} as JSON array"
+            json_releases=$(echo "${{ github.event.inputs.releases }}" |tr "," "\n" |xargs -n1 |awk '{print "\""$1"\""}' |tr "\n" "," |sed 's/,$//' |awk '{print "["$1"]"}')
+            echo "releases=$json_releases" | tee -a $GITHUB_OUTPUT
+          fi
   build-and-publish-image:
+    environment: release
     runs-on: ubuntu-latest
-    env:
-      IMAGE_REPOSITORY: mongodb/mongodb-atlas-kubernetes-operator
     needs:
       - read-versions
+    env:
+      IMAGE_REPOSITORY:  ${{ github.event.inputs.image_repo || 'mongodb/mongodb-atlas-kubernetes-operator' }}
+      QUAY_ROBOT_NAME: mongodb+mongodb_atlas_kubernetes
+      PLATFORMS: "linux/arm64,linux/amd64"
     strategy:
+      fail-fast: false
       matrix:
-        version: ${{ fromJSON(needs.read-versions.outputs.matrix).versions }}
+        version: ${{ fromJSON(needs.read-versions.outputs.releases) }}
     steps:
       - name: Print daily tag
         id: daily-tag
@@ -53,54 +75,186 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
         with:
-          ref: ${{ matrix.version }}
+          ref: "v${{ matrix.version }}"
           submodules: true
           fetch-depth: 0
-      - name: "Set up QEMU"
-        uses: docker/setup-qemu-action@v3
+      - name: Choose Dockerfile & patch as needed
+        id: pick-dockerfile
+        run: |
+          if test -f "fast.Dockerfile"; then
+            echo "dockerfile=fast.Dockerfile" >> $GITHUB_OUTPUT
+          else
+            # This is ugly, but using a heredoc did not work
+            # An external file cannot be used as this code works on a older tag
+            # which is not the one holding this workflow version
+            # TODO: Once versions 1.9.x go away this can be removed
+            echo "diff --git a/Dockerfile b/Dockerfile" > docker.patch
+            echo "index ffffa7bf..e82f0402 100644" >> docker.patch
+            echo "--- a/Dockerfile" >> docker.patch
+            echo "+++ b/Dockerfile" >> docker.patch
+            echo "@@ -1,5 +1,6 @@" >> docker.patch
+            echo " # Build the manager binary" >> docker.patch
+            echo " FROM golang:1.21 as builder" >> docker.patch
+            echo "+ARG GOTOOLCHAIN=auto" >> docker.patch
+            echo " " >> docker.patch
+            echo " WORKDIR /workspace" >> docker.patch
+            echo " # Copy the Go Modules manifests" >> docker.patch
+            patch Dockerfile docker.patch
+            echo "dockerfile=Dockerfile" >> $GITHUB_OUTPUT
+          fi
+      - name: Check signing supported
+        id: check-signing-support
+        run: |
+          if test -f "./scripts/sign-multiarch.sh"; then
+            echo "sign=true" >> $GITHUB_OUTPUT
+          else
+            echo "sign=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Check for devbox
+        id: check-devbox
+        run: |
+          if test -f "devbox.json"; then
+            echo "devbox-build=true" >> $GITHUB_OUTPUT
+          else
+            echo "devbox-build=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Set up Go (Non Devbox)
+        uses: actions/setup-go@v5
+        if: steps.check-devbox.outputs.devbox-build == 'false'
         with:
-          platforms: ${{ fromJSON(needs.read-versions.outputs.matrix).platforms }}
+          go-version-file: "${{ github.workspace }}/go.mod"
+          cache: false
+
+      - name: Setup cache (Non Devbox)
+        uses: actions/cache@v4
+        if: steps.check-devbox.outputs.devbox-build == 'false'
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-build-${{ hashFiles('**/go.sum', '**/go.mod') }}
+
+      - name: Download go build dependencies (Non Devbox)
+        if: steps.check-devbox.outputs.devbox-build == 'false'
+        shell: bash
+        run: |
+          go mod download
+
+      - name: Build all platforms & check version (Non Devbox)
+        if: steps.pick-dockerfile.outputs.dockerfile == 'fast.Dockerfile' && steps.check-devbox.outputs.devbox-build == 'false'
+        run: |
+          make all-platforms VERSION=${{ matrix.version }}
+          # not all versions Makefiles support the version check
+          if make |grep -q check-version; then
+            echo "Checking version..."
+            make check-version VERSION=${{ matrix.version }}
+          else
+            echo "Skipped version check"
+          fi
+
+      - name: Install devbox
+        uses: jetify-com/devbox-install-action@v0.12.0
+        with:
+          enable-cache: 'true'
+        if: steps.check-devbox.outputs.devbox-build == 'true'
+
+      - name: Download Go build dependencies (Devbox)
+        run: devbox run -- 'go mod download'
+        if: steps.check-devbox.outputs.devbox-build == 'true'
+        shell: bash
+
+      - name: Build all platforms & check version (Devbox)
+        run: | 
+          devbox run -- '
+            make all-platforms VERSION=${{ matrix.version }}
+            # Not all versions of Makefiles support the version check
+            if make -n | grep -q check-version; then
+              echo "Checking version..."
+              make check-version VERSION=${{ matrix.version }}
+            else
+              echo "Skipped version check"
+            fi'
+        if: steps.check-devbox.outputs.devbox-build == 'true'
+        shell: bash
       - name: "Set up Docker Buildx"
         uses: docker/setup-buildx-action@v3
         with:
-          platforms: ${{ fromJSON(needs.read-versions.outputs.matrix).platforms }}
+          platforms: ${{ env.PLATFORMS }}
       - name: Login to docker registry
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-      - name: Set up Go
-        uses: actions/setup-go@v3
+      - name: Login to quay.io registry
+        uses: docker/login-action@v3
         with:
-          go-version-file: "${{ github.workspace }}/go.mod"
-      - name: Setup cache
-        uses: actions/cache@v3
+          registry: quay.io
+          username: ${{ env.QUAY_ROBOT_NAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+      - name: Build and push operator to the DockerHub (daily-tag & release-tag)
+        uses: docker/build-push-action@v6
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-build-${{ hashFiles('**/go.sum') }}
-      - name: Download go build dependencies
-        shell: bash
+          context: .
+          file: ${{ steps.pick-dockerfile.outputs.dockerfile }}
+          build-args: VERSION=${{ matrix.version }}
+          platforms: ${{ env.PLATFORMS }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          push: true
+          sbom: true
+          tags: |
+            ${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}
+            ${{ env.IMAGE_REPOSITORY }}:${{ matrix.version }}
+            quay.io/${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}
+            quay.io/${{ env.IMAGE_REPOSITORY }}:${{ matrix.version }}
+      - name: Login to artifactory.corp.mongodb.com
+        if: steps.check-signing-support.outputs.sign == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: artifactory.corp.mongodb.com
+          username: ${{ secrets.MDB_ARTIFACTORY_USERNAME }}
+          password: ${{ secrets.MDB_ARTIFACTORY_PASSWORD }}
+      - name: Sign images (Non Devbox)
+        if: steps.check-signing-support.outputs.sign == 'true' && steps.check-devbox.outputs.devbox-build == 'false'
+        env:
+          PKCS11_URI: ${{ secrets.PKCS11_URI }}
+          GRS_USERNAME:  ${{ secrets.GRS_USERNAME }}
+          GRS_PASSWORD:  ${{ secrets.GRS_PASSWORD }}
         run: |
-          go mod download
-      - name: Build and push operator to the DockerHub (daily-tag)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          build-args: VERSION=${{ matrix.version }}
-          platforms: ${{ fromJSON(needs.read-versions.outputs.matrix).platforms }}
-          tags: ${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          push: true
-      - name: Build and push operator to the DockerHub (release-tag)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          build-args: VERSION=${{ matrix.version }}
-          platforms: ${{ fromJSON(needs.read-versions.outputs.matrix).platforms }}
-          tags: ${{ env.IMAGE_REPOSITORY }}:${{ matrix.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          push: true
+          make sign IMG="${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}" SIGNATURE_REPO=${{ env.IMAGE_REPOSITORY }}
+          make sign IMG="quay.io/${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}" SIGNATURE_REPO=${{ env.IMAGE_REPOSITORY }}
+          make sign IMG="${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}" SIGNATURE_REPO=mongodb/signatures
+
+      - name: Self-verify images (Non Devbox)
+        if: steps.check-signing-support.outputs.sign == 'true' && steps.check-devbox.outputs.devbox-build == 'false'
+        env:
+          PKCS11_URI: ${{ secrets.PKCS11_URI }}
+          GRS_USERNAME:  ${{ secrets.GRS_USERNAME }}
+          GRS_PASSWORD:  ${{ secrets.GRS_PASSWORD }}
+        run: |
+          make verify IMG="${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}" SIGNATURE_REPO=${{ env.IMAGE_REPOSITORY }}
+          make verify IMG="quay.io/${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}" SIGNATURE_REPO=${{ env.IMAGE_REPOSITORY }}
+          make verify IMG="${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}" SIGNATURE_REPO=mongodb/signatures
+      
+      - name: Sign images (Devbox)
+        if: steps.check-signing-support.outputs.sign == 'true' && steps.check-devbox.outputs.devbox-build == 'true'
+        env:
+          PKCS11_URI: ${{ secrets.PKCS11_URI }}
+          GRS_USERNAME:  ${{ secrets.GRS_USERNAME }}
+          GRS_PASSWORD:  ${{ secrets.GRS_PASSWORD }}
+        run: |
+          devbox run -- 'make sign IMG="${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}" SIGNATURE_REPO=${{ env.IMAGE_REPOSITORY }}'
+          devbox run -- 'make sign IMG="quay.io/${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}" SIGNATURE_REPO=${{ env.IMAGE_REPOSITORY }}'
+          devbox run -- 'make sign IMG="${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}" SIGNATURE_REPO=mongodb/signatures'
+          
+      - name: Self-verify images (Devbox)
+        if: steps.check-signing-support.outputs.sign == 'true' && steps.check-devbox.outputs.devbox-build == 'true'
+        env:
+          PKCS11_URI: ${{ secrets.PKCS11_URI }}
+          GRS_USERNAME:  ${{ secrets.GRS_USERNAME }}
+          GRS_PASSWORD:  ${{ secrets.GRS_PASSWORD }}
+        run: |
+          devbox run -- 'make verify IMG="${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}" SIGNATURE_REPO=${{ env.IMAGE_REPOSITORY }}'
+          devbox run -- 'make verify IMG="quay.io/${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}" SIGNATURE_REPO=${{ env.IMAGE_REPOSITORY }}'
+          devbox run -- 'make verify IMG="${{ env.IMAGE_REPOSITORY }}:${{ steps.daily-tag.outputs.daily-tag }}" SIGNATURE_REPO=mongodb/signatures'
+          

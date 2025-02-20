@@ -1,0 +1,21 @@
+apiVersion: atlas.mongodb.com/v1
+kind: AtlasDeployment
+metadata:
+  name: atlas-deployment-backup
+spec:
+  projectRef:
+    name: my-project
+  deploymentSpec:
+    name: deployment-backup
+    backupEnabled: true 
+    clusterType: REPLICASET
+    replicationSpecs:
+      - zoneName: Zone 1
+        regionConfigs:
+          - electableSpecs:
+              instanceSize: M20
+              nodeCount: 1
+            providerName: AWS 
+            backingProviderName: AWS
+            regionName: US_EAST_1
+            priority: 7

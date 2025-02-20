@@ -1,73 +1,21 @@
-name: Clean Atlas organization
-# local run sample:
-# echo '{"ref":"HEAD/ref/CLOUDP-smth", "ref_type":"branch", "action":"workflow_dispatch", "inputs": {"clean":"true", "timelife": "3"} }' > payload.json | act -j cleanup-all -e payload.json
+name: Clean All Atlas organizations
 
 on:
-  schedule:
-    - cron: "0 1 * * 1-5"
-    - cron: "0 3 * * 1-5"
   workflow_dispatch:
     inputs:
-      clean:
-        description: "Clean all(true) or old empty projects(false)?"
-        default: "false"
+      lifetime:
+        description: "Lifetime of project in hours"
+        type: number
+        default: 1
         required: true
-      timelife:
-        description: "Timelife of project in hours"
-        default: "3"
-        required: true
-      cleanPE:
-        description: "Run PE cleaner(true) or not(false)?"
-        default: "true"
-        required: true
-      cleanVPC:
-        description: "Clean VPC(true) or not(false)?"
-        default: "true"
-        required: true
-
-concurrency:
-  group: cleanup
 
 jobs:
-  cleanup-all:
-    name: Cleanup atlas empty projects, and terminate cluster
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+  clean-tests:
+    uses: ./.github/workflows/cleanup-test.yml
+    with:
+      lifetime: 1
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version-file: "${{ github.workspace }}/go.mod"
-
-      - name: Run cleanup VPC
-        if: github.event_name == 'schedule' || github.event.inputs.cleanVPC == 'true'
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          GCP_SA_CRED: ${{ secrets.GCP_SA_CRED }}
-        run: (cd .github/actions/clean-vpc && go run .)
-
-      - name: Run cleanup PE
-        if: github.event_name == 'schedule' || github.event.inputs.cleanPE == 'true'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_ACCOUNT_ARN_LIST: ${{ secrets.AWS_ACCOUNT_ARN_LIST }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          GCP_SA_CRED: ${{ secrets.GCP_SA_CRED }}
-        run: (cd .github/actions/cleanup-pe && go run .)
-
-      - name: Run atlas project cleaner
-        if: always()
-        env:
-          MCLI_PUBLIC_API_KEY: ${{ secrets.ATLAS_PUBLIC_KEY }}
-          MCLI_PRIVATE_API_KEY: ${{ secrets.ATLAS_PRIVATE_KEY }}
-          CLEAN_ALL: ${{ github.event.inputs.clean }}
-          MAX_PROJECT_LIFETIME: ${{ github.event.inputs.timelife }}
-        run: (cd .github/actions/cleanup && go run .)
+  clean-gov-tests:
+    uses: ./.github/workflows/cleanup-gov-test.yml
+    with:
+      lifetime: 1

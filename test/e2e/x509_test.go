@@ -5,13 +5,13 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/common"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/status"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions/deploy"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/data"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/k8s"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/model"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1/common"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions/deploy"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/data"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/k8s"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/model"
 )
 
 var _ = Describe("UserLogin", Label("x509auth"), func() {
@@ -62,7 +62,7 @@ func x509Flow(testData *model.TestDataProvider, certRef *common.ResourceRefNames
 			Namespace: testData.Resources.Namespace}, testData.Project)).To(Succeed())
 		testData.Project.Spec.X509CertRef = certRef
 		Expect(testData.K8SClient.Update(testData.Context, testData.Project)).To(Succeed())
-		actions.WaitForConditionsToBecomeTrue(testData, status.ReadyType)
+		actions.WaitForConditionsToBecomeTrue(testData, api.ReadyType)
 	})
 
 	By("Create User with X.509 cert", func() {

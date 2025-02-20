@@ -5,11 +5,12 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/utils"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/utils"
 )
 
 func main() {
@@ -32,7 +33,7 @@ func generateCert() error {
 		basePath += "/"
 	}
 
-	if err := os.MkdirAll(basePath, os.ModePerm); err != nil {
+	if err := os.MkdirAll(basePath, fs.ModePerm); err != nil {
 		return fmt.Errorf("failed to create path: %w", err)
 	}
 

@@ -7,7 +7,7 @@ linters:
     - dupl
     - errcheck
     - errorlint
-    - exportloopref
+    - copyloopvar
     #- gocritic
     - gocyclo
     - goimports
@@ -28,12 +28,13 @@ linters:
     - unparam
     - unused
     - whitespace
+    - importas
 
 linters-settings:
   misspell:
     locale: US
   goimports:
-    local-prefixes: github.com/mongodb/mongodb-atlas-kubernetes
+    local-prefixes: github.com/mongodb/mongodb-atlas-kubernetes/v2
   depguard:
     rules:
       all:
@@ -93,10 +94,18 @@ issues:
       linters:
         - stylecheck
         - noctx
+    - path: test/helper
+      linters:
+        - stylecheck
+      text: "ST1000:|ST1001:|ST1003:"
+    - path: test/helper/e2e/appclient
+      linters:
+        - noctx
     - path: pkg/controller
       linters:
         - prealloc
         - dupl
+        - unparam
     - path: pkg/controller/atlasdatabaseuser/connectionsecrets
       linters:
         - prealloc

@@ -8,14 +8,14 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
 
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/status"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions/deploy"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/cli"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/config"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/data"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/k8s"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/model"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions/deploy"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/cli"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/config"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/data"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/k8s"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/model"
 )
 
 var _ = Describe("User can deploy operator from bundles", func() {
@@ -67,7 +67,7 @@ var _ = Describe("User can deploy operator from bundles", func() {
 			}
 			deploy.CreateProject(testData)
 			By(fmt.Sprintf("project namespace %v", testData.Project.Namespace))
-			actions.WaitForConditionsToBecomeTrue(testData, status.ReadyType)
+			actions.WaitForConditionsToBecomeTrue(testData, api.ReadyType)
 			deploy.CreateInitialDeployments(testData)
 			deploy.CreateUsers(testData)
 		})

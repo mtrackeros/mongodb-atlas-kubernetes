@@ -1,4 +1,4 @@
-FROM golang:1.21
+FROM golang:1.23
 
 ENV KUBECTL_VERSION 1.18.12
 ENV GO111MODULE on
@@ -15,11 +15,11 @@ RUN cd /usr/local/bin &&\
 RUN CONTROLLER_GEN_TMP_DIR=$(mktemp -d) && \
     cd $CONTROLLER_GEN_TMP_DIR && \
     go mod init tmp && \
-    go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.9.2 && \
+    go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.1 && \
     rm -rf $CONTROLLER_GEN_TMP_DIR && \
     CONTROLLER_GEN=${GOBIN}/controller-gen
 
-RUN curl -LO https://github.com/operator-framework/operator-sdk/releases/download/v1.16.0/operator-sdk_linux_amd64 && \
+RUN curl -LO https://github.com/operator-framework/operator-sdk/releases/download/v1.34.1/operator-sdk_linux_amd64 && \
     chmod +x operator-sdk_linux_amd64 && \
     mv operator-sdk_linux_amd64 /usr/local/bin/operator-sdk
 

@@ -2,30 +2,37 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/api/atlas"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/status"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/kube"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/testutil"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions/deploy"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/config"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/data"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/k8s"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/model"
-
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api"
+	akov2 "github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1/common"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1/status"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/featureflags"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/kube"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions/deploy"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/api/atlas"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/config"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/data"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/k8s"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/model"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/utils"
 )
 
-var _ = Describe("Operator watch all namespace should create connection secrets for database users in any namaspace", Label("deployment-ns"), func() {
+const (
+	localSecretName = "local-secret"
+)
+
+var _ = Describe("Operator watch all namespace should create connection secrets for database users in any namespace", Label("users", "users-ns"), func() {
 	var testData *model.TestDataProvider
 	secondNamespace := "second-namespace"
 
@@ -63,6 +70,10 @@ var _ = Describe("Operator watch all namespace should create connection secrets 
 						data.WithSecretRef("dbuser-secret-u1"),
 						data.WithReadWriteRole(),
 						data.WithNamespace(config.DefaultOperatorNS),
+						data.WithLabels([]common.LabelSpec{
+							{Key: "type", Value: "e2e-test"},
+							{Key: "context", Value: "cloud"},
+						}),
 					),
 					data.BasicUser(
 						"reader2",
@@ -71,43 +82,51 @@ var _ = Describe("Operator watch all namespace should create connection secrets 
 						data.WithSecretRef("dbuser-secret-u2"),
 						data.WithReadWriteRole(),
 						data.WithNamespace(secondNamespace),
+						// user 2 access Atlas a local secret
+						data.WithCredentials(localSecretName),
 					),
 				)
 			testData.Resources.Namespace = config.DefaultOperatorNS
 		})
 		By("Running operator watching global namespace", func() {
-			k8s.CreateNamespace(testData.Context, testData.K8SClient, config.DefaultOperatorNS)
+			Expect(k8s.CreateNamespace(testData.Context, testData.K8SClient, config.DefaultOperatorNS)).To(Succeed())
 			k8s.CreateDefaultSecret(testData.Context, testData.K8SClient, config.DefaultOperatorGlobalKey, config.DefaultOperatorNS)
-			k8s.CreateNamespace(testData.Context, testData.K8SClient, secondNamespace)
+			k8s.CreateDefaultSecret(testData.Context, testData.K8SClient, localSecretName, config.DefaultOperatorNS)
+			Expect(k8s.CreateNamespace(testData.Context, testData.K8SClient, secondNamespace)).To(Succeed())
+			k8s.CreateDefaultSecret(testData.Context, testData.K8SClient, localSecretName, secondNamespace)
 
-			mgr, err := k8s.BuildManager(&k8s.Config{
+			c, err := k8s.BuildCluster(&k8s.Config{
 				GlobalAPISecret: client.ObjectKey{
 					Namespace: config.DefaultOperatorNS,
 					Name:      config.DefaultOperatorGlobalKey,
 				},
+				WatchedNamespaces: map[string]bool{
+					config.DefaultOperatorNS: true,
+					secondNamespace:          true,
+				},
+				FeatureFlags: featureflags.NewFeatureFlags(func() []string { return []string{} }),
 			})
 			Expect(err).NotTo(HaveOccurred())
 
 			go func(ctx context.Context) context.Context {
-				err := mgr.Start(ctx)
+				err := c.Start(ctx)
 				Expect(err).NotTo(HaveOccurred())
 				return ctx
 			}(testData.Context)
 		})
-		By("Creating project and database users resources", func() {
+		By("Creating the project", func() {
 			deploy.CreateProject(testData)
+		})
+		By("Failing when an user has both project and atlas references are set", func() {
+			testData.Users[0].Spec.ExternalProjectRef = &akov2.ExternalProjectReference{
+				ID: testData.Project.ID(),
+			}
+
+			Expect(testData.K8SClient.Create(testData.Context, testData.Users[0])).ToNot(Succeed())
+		})
+		By("Creating a linked and a standalone users", func() {
+			data.WithExternalProjectRef(testData.Project.ID(), localSecretName)(testData.Users[0])
 			deploy.CreateUsers(testData)
-
-			Eventually(func(g Gomega) bool {
-				for i := range testData.Users {
-					dbUser := testData.Users[i]
-
-					g.Expect(testData.K8SClient.Get(testData.Context, client.ObjectKeyFromObject(dbUser), dbUser)).To(Succeed())
-					g.Expect(testutil.CheckCondition(testData.K8SClient, dbUser, status.TrueCondition(status.ReadyType))).To(BeTrue())
-				}
-
-				return true
-			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(BeTrue())
 
 			Expect(countConnectionSecrets(testData.K8SClient, testData.Project.Spec.Name)).To(Equal(0))
 		})
@@ -141,6 +160,96 @@ var _ = Describe("Operator watch all namespace should create connection secrets 
 			Eventually(func(g Gomega) bool {
 				return g.Expect(countConnectionSecrets(testData.K8SClient, testData.Project.Spec.Name)).To(Equal(0))
 			}).WithTimeout(5 * time.Minute).WithPolling(10 * time.Second).Should(BeTrue())
+		})
+	})
+})
+
+var _ = Describe("Operator fails if local credentials is mentioned but unavailable", Label("users", "users-no-creds"), func() {
+	var testData *model.TestDataProvider
+	namespace := utils.RandomName("namespace")
+
+	_ = AfterEach(func() {
+		actions.DeleteTestDataUsers(testData)
+		actions.DeleteTestDataProject(testData)
+		actions.AfterEachFinalCleanup([]model.TestDataProvider{*testData})
+		Expect(k8s.DeleteNamespace(testData.Context, testData.K8SClient, namespace)).Should(Succeed())
+	})
+
+	It("Operator run on global namespace to test bogus local credential", func() {
+		By("Setting up test data", func() {
+			project := data.DefaultProject()
+			project.Namespace = namespace
+
+			testData = model.DataProvider(
+				"dbusers-operator-global",
+				model.NewEmptyAtlasKeyType().UseDefaultFullAccess(),
+				30008,
+				[]func(*model.TestDataProvider){},
+			).WithProject(project).
+				WithUsers(
+					data.BasicUser(
+						"reader1",
+						"reader1",
+						data.WithSecretRef("dbuser-secret-u1"),
+						data.WithReadWriteRole(),
+						data.WithNamespace(namespace),
+						data.WithLabels([]common.LabelSpec{
+							{Key: "type", Value: "e2e-test"},
+							{Key: "context", Value: "cloud"},
+						}),
+						// user 2 access Atlas a local secret
+						data.WithCredentials(localSecretName),
+					),
+				)
+			testData.Resources.Namespace = namespace
+		})
+		By("Running operator watching global namespace missing credentials", func() {
+			Expect(k8s.CreateNamespace(testData.Context, testData.K8SClient, namespace)).NotTo(HaveOccurred())
+			k8s.CreateDefaultSecret(testData.Context, testData.K8SClient, config.DefaultOperatorGlobalKey, namespace)
+
+			c, err := k8s.BuildCluster(&k8s.Config{
+				GlobalAPISecret: client.ObjectKey{
+					Namespace: namespace,
+					Name:      config.DefaultOperatorGlobalKey,
+				},
+				WatchedNamespaces: map[string]bool{
+					namespace: true,
+				},
+				FeatureFlags: featureflags.NewFeatureFlags(func() []string { return []string{} }),
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			go func(ctx context.Context) context.Context {
+				err := c.Start(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				return ctx
+			}(testData.Context)
+		})
+		By("Creating project", func() {
+			deploy.CreateProject(testData)
+		})
+		By("Creating user with missing credentials", func() {
+			user := testData.Users[0]
+			if user.Spec.PasswordSecret != nil {
+				secret := utils.UserSecretPassword()
+				Expect(k8s.CreateUserSecret(testData.Context, testData.K8SClient, secret,
+					user.Spec.PasswordSecret.Name, user.Namespace)).Should(Succeed(),
+					"Create user secret failed")
+			}
+			err := testData.K8SClient.Create(testData.Context, user)
+			Expect(err).ShouldNot(HaveOccurred(), fmt.Sprintf("User was not created: %v", user))
+			Eventually(func(g Gomega) {
+				g.Expect(testData.K8SClient.Get(testData.Context, types.NamespacedName{Name: user.GetName(), Namespace: user.GetNamespace()}, user))
+				g.Expect(user.Status.Conditions).ShouldNot(BeEmpty())
+				for _, condition := range user.Status.Conditions {
+					if condition.Type == api.ReadyType {
+						g.Expect(condition.Status).ShouldNot(Equal(corev1.ConditionTrue), "User should NOT be ready")
+					}
+					if condition.Type == api.DatabaseUserReadyType {
+						g.Expect(condition.Message).Should(ContainSubstring(`Secret "local-secret" not found`))
+					}
+				}
+			}).WithTimeout(2*time.Minute).WithPolling(20*time.Second).Should(Succeed(), "User did not fail as expected")
 		})
 	})
 })

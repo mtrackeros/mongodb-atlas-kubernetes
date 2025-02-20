@@ -6,28 +6,30 @@ import (
 	"os"
 	"time"
 
+	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/google/uuid"
-	"go.mongodb.org/atlas/mongodbatlas"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	mdbv1 "github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/common"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/project"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/status"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/controller/connectionsecret"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/testutil"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/toptr"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions/cloud"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/actions/cloudaccess"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/config"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/k8s"
-	"github.com/mongodb/mongodb-atlas-kubernetes/test/e2e/model"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api"
+	akov2 "github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1/common"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1/project"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1/status"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/controller/connectionsecret"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/controller/workflow"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/pointer"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/conditions"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions/cloud"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/actions/cloudaccess"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/config"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/k8s"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/e2e/model"
+	akoretry "github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/retry"
 )
 
 var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
@@ -80,7 +82,7 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 		})
 	})
 
-	It("Manage all supported Atlas for Government features", func() {
+	It("Manage all supported Atlas for Government features", Label("atlas-gov-supported"), func() {
 		By("Preparing API Key for integrations", func() {
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
@@ -96,12 +98,12 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 		})
 
 		By("Creating a project to be managed by the operator", func() {
-			akoProject := &mdbv1.AtlasProject{
+			akoProject := &akov2.AtlasProject{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      projectName,
 					Namespace: testData.Resources.Namespace,
 				},
-				Spec: mdbv1.AtlasProjectSpec{
+				Spec: akov2.AtlasProjectSpec{
 					Name:                    projectName,
 					RegionUsageRestrictions: "NONE",
 					ProjectIPAccessList: []project.IPAccessList{
@@ -122,30 +124,30 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 						DayOfWeek: 1,
 						HourOfDay: 20,
 					},
-					Auditing: &mdbv1.Auditing{
+					Auditing: &akov2.Auditing{
 						AuditAuthorizationSuccess: false,
 						AuditFilter:               `{"$or":[{"users":[]},{"$and":[{"users":{"$elemMatch":{"$or":[{"db":"admin"}]}}},{"atype":{"$in":["authenticate","dropDatabase","createUser","dropUser","dropAllUsersFromDatabase","dropAllRolesFromDatabase","shutdown"]}}]}]}`,
 						Enabled:                   true,
 					},
-					Settings: &mdbv1.ProjectSettings{
-						IsCollectDatabaseSpecificsStatisticsEnabled: toptr.MakePtr(true),
-						IsDataExplorerEnabled:                       toptr.MakePtr(false),
-						IsExtendedStorageSizesEnabled:               toptr.MakePtr(false),
-						IsPerformanceAdvisorEnabled:                 toptr.MakePtr(true),
-						IsRealtimePerformancePanelEnabled:           toptr.MakePtr(true),
-						IsSchemaAdvisorEnabled:                      toptr.MakePtr(true),
+					Settings: &akov2.ProjectSettings{
+						IsCollectDatabaseSpecificsStatisticsEnabled: pointer.MakePtr(true),
+						IsDataExplorerEnabled:                       pointer.MakePtr(false),
+						IsExtendedStorageSizesEnabled:               pointer.MakePtr(false),
+						IsPerformanceAdvisorEnabled:                 pointer.MakePtr(true),
+						IsRealtimePerformancePanelEnabled:           pointer.MakePtr(true),
+						IsSchemaAdvisorEnabled:                      pointer.MakePtr(true),
 					},
-					CustomRoles: []mdbv1.CustomRole{
+					CustomRoles: []akov2.CustomRole{
 						{
 							Name:           "testRole",
 							InheritedRoles: nil,
-							Actions: []mdbv1.Action{
+							Actions: []akov2.Action{
 								{
 									Name: "INSERT",
-									Resources: []mdbv1.Resource{
+									Resources: []akov2.Resource{
 										{
-											Database:   toptr.MakePtr("testD"),
-											Collection: toptr.MakePtr("testCollection"),
+											Database:   pointer.MakePtr("testD"),
+											Collection: pointer.MakePtr("testCollection"),
 										},
 									},
 								},
@@ -161,16 +163,16 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 
 		By("Project is ready", func() {
 			Eventually(func(g Gomega) {
-				expectedConditions := testutil.MatchConditions(
-					status.TrueCondition(status.ValidationSucceeded),
-					status.TrueCondition(status.ProjectReadyType),
-					status.TrueCondition(status.IPAccessListReadyType),
-					status.TrueCondition(status.IntegrationReadyType),
-					status.TrueCondition(status.MaintenanceWindowReadyType),
-					status.TrueCondition(status.AuditingReadyType),
-					status.TrueCondition(status.ProjectSettingsReadyType),
-					status.TrueCondition(status.ProjectCustomRolesReadyType),
-					status.TrueCondition(status.ReadyType),
+				expectedConditions := conditions.MatchConditions(
+					api.TrueCondition(api.ValidationSucceeded),
+					api.TrueCondition(api.ProjectReadyType),
+					api.TrueCondition(api.IPAccessListReadyType),
+					api.TrueCondition(api.IntegrationReadyType),
+					api.TrueCondition(api.MaintenanceWindowReadyType),
+					api.TrueCondition(api.AuditingReadyType),
+					api.TrueCondition(api.ProjectSettingsReadyType),
+					api.TrueCondition(api.ProjectCustomRolesReadyType),
+					api.TrueCondition(api.ReadyType),
 				)
 
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
@@ -181,42 +183,44 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 		By("Configuring a Team", func() {
 			Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
 
-			users, _, err := atlasClient.Client.AtlasUsers.List(ctx, testData.Project.ID(), &mongodbatlas.ListOptions{})
+			users, _, err := atlasClient.Client.ProjectsApi.
+				ListProjectUsers(ctx, testData.Project.ID()).
+				Execute()
 			Expect(err).ToNot(HaveOccurred())
-			Expect(users).ToNot(BeEmpty())
+			Expect(users.GetResults()).ToNot(BeEmpty())
 
-			usernames := make([]mdbv1.TeamUser, 0, len(users))
-			for _, user := range users {
-				usernames = append(usernames, mdbv1.TeamUser(user.Username))
+			usernames := make([]akov2.TeamUser, 0, users.GetTotalCount())
+			for _, user := range users.GetResults() {
+				usernames = append(usernames, akov2.TeamUser(user.GetUsername()))
 			}
 
-			akoTeam := &mdbv1.AtlasTeam{
+			akoTeam := &akov2.AtlasTeam{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      fmt.Sprintf("%s-team", projectName),
 					Namespace: testData.Resources.Namespace,
 				},
-				Spec: mdbv1.TeamSpec{
+				Spec: akov2.TeamSpec{
 					Name:      fmt.Sprintf("%s-team", projectName),
 					Usernames: usernames,
 				},
 			}
-			testData.Teams = []*mdbv1.AtlasTeam{akoTeam}
+			testData.Teams = []*akov2.AtlasTeam{akoTeam}
 			Expect(testData.K8SClient.Create(ctx, testData.Teams[0]))
 
-			testData.Project.Spec.Teams = []mdbv1.Team{
+			testData.Project.Spec.Teams = []akov2.Team{
 				{
 					TeamRef: common.ResourceRefNamespaced{
 						Name:      fmt.Sprintf("%s-team", projectName),
 						Namespace: testData.Resources.Namespace,
 					},
-					Roles: []mdbv1.TeamRole{"GROUP_READ_ONLY"},
+					Roles: []akov2.TeamRole{"GROUP_READ_ONLY"},
 				},
 			}
 			Expect(testData.K8SClient.Update(ctx, testData.Project)).To(Succeed())
 
 			Eventually(func(g Gomega) {
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
-				g.Expect(testData.Project.Status.Conditions).To(ContainElement(testutil.MatchCondition(status.TrueCondition(status.ProjectTeamsReadyType))))
+				g.Expect(testData.Project.Status.Conditions).To(ContainElement(conditions.MatchCondition(api.TrueCondition(api.ProjectTeamsReadyType))))
 			}).WithTimeout(time.Minute * 5).WithPolling(time.Second * 20).Should(Succeed())
 		})
 
@@ -225,7 +229,7 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
-			testData.Project.Spec.CloudProviderAccessRoles = []mdbv1.CloudProviderAccessRole{
+			testData.Project.Spec.CloudProviderIntegrations = []akov2.CloudProviderIntegration{
 				{
 					ProviderName:      "AWS",
 					IamAssumedRoleArn: assumedRoleArn,
@@ -235,21 +239,21 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 
 			Eventually(func(g Gomega) {
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
-				g.Expect(testData.Project.Status.CloudProviderAccessRoles).ShouldNot(BeEmpty())
-				g.Expect(testData.Project.Status.CloudProviderAccessRoles[0].Status).Should(BeElementOf([2]string{status.CloudProviderAccessStatusCreated, status.CloudProviderAccessStatusFailedToAuthorize}))
+				g.Expect(testData.Project.Status.CloudProviderIntegrations).ShouldNot(BeEmpty())
+				g.Expect(testData.Project.Status.CloudProviderIntegrations[0].Status).Should(BeElementOf([2]string{status.CloudProviderIntegrationStatusCreated, status.CloudProviderIntegrationStatusFailedToAuthorize}))
 			}).WithTimeout(time.Minute * 5).WithPolling(time.Second * 20).Should(Succeed())
 
 			Expect(
 				cloudaccess.AddAtlasStatementToAWSIAMRole(
-					testData.Project.Status.CloudProviderAccessRoles[0].AtlasAWSAccountArn,
-					testData.Project.Status.CloudProviderAccessRoles[0].AtlasAssumedRoleExternalID,
+					testData.Project.Status.CloudProviderIntegrations[0].AtlasAWSAccountArn,
+					testData.Project.Status.CloudProviderIntegrations[0].AtlasAssumedRoleExternalID,
 					projectName,
 				),
 			).To(Succeed())
 
 			Eventually(func(g Gomega) {
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
-				g.Expect(testData.Project.Status.Conditions).To(ContainElement(testutil.MatchCondition(status.TrueCondition(status.CloudProviderAccessReadyType))))
+				g.Expect(testData.Project.Status.Conditions).To(ContainElement(conditions.MatchCondition(api.TrueCondition(api.CloudProviderIntegrationReadyType))))
 			}).WithTimeout(time.Minute * 5).WithPolling(time.Second * 20).Should(Succeed())
 		})
 
@@ -257,14 +261,14 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 			awsAccountID, err := awsHelper.GetAccountID()
 			Expect(err).ToNot(HaveOccurred())
 
-			AwsVpcID, err := awsHelper.InitNetwork(projectName, "10.0.0.0/24", "us-east-1", map[string]string{"subnet-1": "10.0.0.0/24"}, false)
+			AwsVpcID, err := awsHelper.InitNetwork(projectName, "10.0.0.0/24", "us-west-1", map[string]string{"subnet-1": "10.0.0.0/24"}, false)
 			Expect(err).ToNot(HaveOccurred())
 
 			Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
-			testData.Project.Spec.NetworkPeers = []mdbv1.NetworkPeer{
+			testData.Project.Spec.NetworkPeers = []akov2.NetworkPeer{
 				{
 					ProviderName:        "AWS",
-					AccepterRegionName:  "us-east-1",
+					AccepterRegionName:  "us-west-1",
 					AtlasCIDRBlock:      "192.168.224.0/21",
 					AWSAccountID:        awsAccountID,
 					RouteTableCIDRBlock: "10.0.0.0/24",
@@ -279,45 +283,74 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 				g.Expect(testData.Project.Status.NetworkPeers[0].StatusName).Should(Equal("PENDING_ACCEPTANCE"))
 			}).WithTimeout(time.Minute * 15).WithPolling(time.Second * 20).Should(Succeed())
 
-			Expect(awsHelper.AcceptVpcPeeringConnection(testData.Project.Status.NetworkPeers[0].ConnectionID, "us-east-1")).To(Succeed())
+			Expect(awsHelper.AcceptVpcPeeringConnection(testData.Project.Status.NetworkPeers[0].ConnectionID, "us-west-1")).To(Succeed())
 
 			Eventually(func(g Gomega) {
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
-				g.Expect(testData.Project.Status.Conditions).To(ContainElement(testutil.MatchCondition(status.TrueCondition(status.NetworkPeerReadyType))))
+				g.Expect(testData.Project.Status.Conditions).To(ContainElement(conditions.MatchCondition(api.TrueCondition(api.NetworkPeerReadyType))))
 			}).WithTimeout(time.Minute * 5).WithPolling(time.Second * 20).Should(Succeed())
 		})
 
 		By("Configuring Encryption at Rest", func() {
 			Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
-			atlasAccountARN := testData.Project.Status.CloudProviderAccessRoles[0].AtlasAWSAccountArn
-			awsRoleARN := testData.Project.Status.CloudProviderAccessRoles[0].IamAssumedRoleArn
-			atlasRoleID := testData.Project.Status.CloudProviderAccessRoles[0].RoleID
+			atlasAccountARN := testData.Project.Status.CloudProviderIntegrations[0].AtlasAWSAccountArn
+			awsRoleARN := testData.Project.Status.CloudProviderIntegrations[0].IamAssumedRoleArn
+			atlasRoleID := testData.Project.Status.CloudProviderIntegrations[0].RoleID
 
-			customerMasterKeyID, err := awsHelper.CreateKMS(fmt.Sprintf("%s-kms", projectName), "us-east-1", atlasAccountARN, awsRoleARN)
+			customerMasterKeyID, err := awsHelper.CreateKMS(fmt.Sprintf("%s-kms", projectName), "us-west-1", atlasAccountARN, awsRoleARN)
 			Expect(err).ToNot(HaveOccurred())
 
-			testData.Project.Spec.EncryptionAtRest = &mdbv1.EncryptionAtRest{
-				AwsKms: mdbv1.AwsKms{
-					Enabled:             toptr.MakePtr(true),
-					CustomerMasterKeyID: customerMasterKeyID,
-					Region:              "US_EAST_1",
-					RoleID:              atlasRoleID,
+			secret := &corev1.Secret{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "Secret",
+					APIVersion: "v1",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "aws-secret",
+					Namespace: testData.Resources.Namespace,
+					Labels: map[string]string{
+						connectionsecret.TypeLabelKey: connectionsecret.CredLabelVal,
+					},
+				},
+				Data: map[string][]byte{
+					"CustomerMasterKeyID": []byte(customerMasterKeyID),
+					"RoleID":              []byte(atlasRoleID),
 				},
 			}
-			Expect(testData.K8SClient.Update(ctx, testData.Project)).To(Succeed())
+			Expect(testData.K8SClient.Create(ctx, secret)).To(Succeed())
+
+			encryptionAtRest := &akov2.EncryptionAtRest{
+				AwsKms: akov2.AwsKms{
+					Enabled: pointer.MakePtr(true),
+					Region:  "US_WEST_1",
+					SecretRef: common.ResourceRefNamespaced{
+						Name:      "aws-secret",
+						Namespace: testData.Resources.Namespace,
+					},
+				},
+			}
+
+			_, err = akoretry.RetryUpdateOnConflict(
+				ctx,
+				testData.K8SClient,
+				client.ObjectKeyFromObject(testData.Project),
+				func(project *akov2.AtlasProject) {
+					project.Spec.EncryptionAtRest = encryptionAtRest
+				})
+			Expect(err).To(BeNil())
 
 			Eventually(func(g Gomega) {
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
-				g.Expect(testData.Project.Status.Conditions).To(ContainElement(testutil.MatchCondition(status.TrueCondition(status.EncryptionAtRestReadyType))))
+				g.Expect(testData.Project.Status.Conditions).To(ContainElement(conditions.MatchCondition(api.TrueCondition(api.EncryptionAtRestReadyType))))
 			}).WithTimeout(time.Minute * 5).WithPolling(time.Second * 20).Should(Succeed())
 		})
 
 		By("Configuring Private Endpoint", func() {
 			Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
-			testData.Project.Spec.PrivateEndpoints = []mdbv1.PrivateEndpoint{
+			testData.Project.Spec.PrivateEndpoints = []akov2.PrivateEndpoint{
 				{
 					Provider: "AWS",
-					Region:   "us-east-1",
+					Region:   "us-west-1",
 				},
 			}
 			Expect(testData.K8SClient.Update(ctx, testData.Project)).To(Succeed())
@@ -325,13 +358,13 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 			Eventually(func(g Gomega) {
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
 				g.Expect(testData.Project.Status.PrivateEndpoints).ShouldNot(BeEmpty())
-				g.Expect(testData.Project.Status.Conditions).To(ContainElement(testutil.MatchCondition(status.TrueCondition(status.PrivateEndpointServiceReadyType))))
+				g.Expect(testData.Project.Status.Conditions).To(ContainElement(conditions.MatchCondition(api.TrueCondition(api.PrivateEndpointServiceReadyType))))
 			}).WithTimeout(time.Minute * 15).WithPolling(time.Second * 20).Should(Succeed())
 
 			peID, err := awsHelper.CreatePrivateEndpoint(
 				testData.Project.Status.PrivateEndpoints[0].ServiceName,
 				fmt.Sprintf("pe-%s-gov", testData.Project.Status.PrivateEndpoints[0].ID),
-				"us-east-1",
+				"us-west-1",
 			)
 			Expect(err).ToNot(HaveOccurred())
 
@@ -341,25 +374,25 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 
 			Eventually(func(g Gomega) {
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
-				g.Expect(testData.Project.Status.Conditions).To(ContainElement(testutil.MatchCondition(status.TrueCondition(status.PrivateEndpointReadyType))))
+				g.Expect(testData.Project.Status.Conditions).To(ContainElement(conditions.MatchCondition(api.TrueCondition(api.PrivateEndpointReadyType))))
 			}).WithTimeout(time.Minute * 10).WithPolling(time.Second * 20).Should(Succeed())
 		})
 
 		By("Project is in ready state", func() {
-			expectedConditions := testutil.MatchConditions(
-				status.TrueCondition(status.ValidationSucceeded),
-				status.TrueCondition(status.ProjectReadyType),
-				status.TrueCondition(status.IPAccessListReadyType),
-				status.TrueCondition(status.IntegrationReadyType),
-				status.TrueCondition(status.MaintenanceWindowReadyType),
-				status.TrueCondition(status.AuditingReadyType),
-				status.TrueCondition(status.ProjectSettingsReadyType),
-				status.TrueCondition(status.ProjectCustomRolesReadyType),
-				status.TrueCondition(status.ProjectTeamsReadyType),
-				status.TrueCondition(status.CloudProviderAccessReadyType),
-				status.TrueCondition(status.NetworkPeerReadyType),
-				status.TrueCondition(status.EncryptionAtRestReadyType),
-				status.TrueCondition(status.ReadyType),
+			expectedConditions := conditions.MatchConditions(
+				api.TrueCondition(api.ValidationSucceeded),
+				api.TrueCondition(api.ProjectReadyType),
+				api.TrueCondition(api.IPAccessListReadyType),
+				api.TrueCondition(api.IntegrationReadyType),
+				api.TrueCondition(api.MaintenanceWindowReadyType),
+				api.TrueCondition(api.AuditingReadyType),
+				api.TrueCondition(api.ProjectSettingsReadyType),
+				api.TrueCondition(api.ProjectCustomRolesReadyType),
+				api.TrueCondition(api.ProjectTeamsReadyType),
+				api.TrueCondition(api.CloudProviderIntegrationReadyType),
+				api.TrueCondition(api.NetworkPeerReadyType),
+				api.TrueCondition(api.EncryptionAtRestReadyType),
+				api.TrueCondition(api.ReadyType),
 			)
 
 			Eventually(func(g Gomega) {
@@ -369,13 +402,13 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 		})
 
 		By("Creating a Cluster", func() {
-			akoBackupPolicy := &mdbv1.AtlasBackupPolicy{
+			akoBackupPolicy := &akov2.AtlasBackupPolicy{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      fmt.Sprintf("%s-policy", clusterName),
 					Namespace: testData.Resources.Namespace,
 				},
-				Spec: mdbv1.AtlasBackupPolicySpec{
-					Items: []mdbv1.AtlasBackupPolicyItem{
+				Spec: akov2.AtlasBackupPolicySpec{
+					Items: []akov2.AtlasBackupPolicyItem{
 						{
 							FrequencyType:     "hourly",
 							FrequencyInterval: 12,
@@ -387,12 +420,12 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 			}
 			Expect(testData.K8SClient.Create(ctx, akoBackupPolicy))
 
-			akoBackupSchedule := &mdbv1.AtlasBackupSchedule{
+			akoBackupSchedule := &akov2.AtlasBackupSchedule{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      fmt.Sprintf("%s-schedule", clusterName),
 					Namespace: testData.Resources.Namespace,
 				},
-				Spec: mdbv1.AtlasBackupScheduleSpec{
+				Spec: akov2.AtlasBackupScheduleSpec{
 					PolicyRef: common.ResourceRefNamespaced{
 						Name:      fmt.Sprintf("%s-policy", clusterName),
 						Namespace: testData.Resources.Namespace,
@@ -409,58 +442,60 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 			}
 			Expect(testData.K8SClient.Create(ctx, akoBackupSchedule))
 
-			akoDeployment := &mdbv1.AtlasDeployment{
+			akoDeployment := &akov2.AtlasDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      clusterName,
 					Namespace: testData.Resources.Namespace,
 				},
-				Spec: mdbv1.AtlasDeploymentSpec{
-					Project: common.ResourceRefNamespaced{
-						Name:      projectName,
-						Namespace: testData.Resources.Namespace,
+				Spec: akov2.AtlasDeploymentSpec{
+					ProjectDualReference: akov2.ProjectDualReference{
+						ProjectRef: &common.ResourceRefNamespaced{
+							Name:      projectName,
+							Namespace: testData.Resources.Namespace,
+						},
 					},
-					AdvancedDeploymentSpec: &mdbv1.AdvancedDeploymentSpec{
+					DeploymentSpec: &akov2.AdvancedDeploymentSpec{
 						Name:          clusterName,
-						BackupEnabled: toptr.MakePtr(true),
-						BiConnector: &mdbv1.BiConnectorSpec{
-							Enabled:        toptr.MakePtr(true),
+						BackupEnabled: pointer.MakePtr(true),
+						BiConnector: &akov2.BiConnectorSpec{
+							Enabled:        pointer.MakePtr(true),
 							ReadPreference: "secondary",
 						},
 						ClusterType:              "REPLICASET",
-						DiskSizeGB:               toptr.MakePtr(40),
+						DiskSizeGB:               pointer.MakePtr(40),
 						EncryptionAtRestProvider: "AWS",
 						Labels: []common.LabelSpec{
 							{Key: "type", Value: "e2e-test"},
 							{Key: "context", Value: "cloud-gov"},
 						},
 						MongoDBMajorVersion: "7.0",
-						Paused:              toptr.MakePtr(false),
-						PitEnabled:          toptr.MakePtr(true),
-						ReplicationSpecs: []*mdbv1.AdvancedReplicationSpec{
+						Paused:              pointer.MakePtr(false),
+						PitEnabled:          pointer.MakePtr(true),
+						ReplicationSpecs: []*akov2.AdvancedReplicationSpec{
 							{
 								NumShards: 1,
 								ZoneName:  "GOV1",
-								RegionConfigs: []*mdbv1.AdvancedRegionConfig{
+								RegionConfigs: []*akov2.AdvancedRegionConfig{
 									{
-										ElectableSpecs: &mdbv1.Specs{
-											DiskIOPS:     toptr.MakePtr(int64(3000)),
+										ElectableSpecs: &akov2.Specs{
+											DiskIOPS:     pointer.MakePtr(int64(3000)),
 											InstanceSize: "M20",
-											NodeCount:    toptr.MakePtr(3),
+											NodeCount:    pointer.MakePtr(3),
 										},
-										AutoScaling: &mdbv1.AdvancedAutoScalingSpec{
-											DiskGB: &mdbv1.DiskGB{
-												Enabled: toptr.MakePtr(true),
+										AutoScaling: &akov2.AdvancedAutoScalingSpec{
+											DiskGB: &akov2.DiskGB{
+												Enabled: pointer.MakePtr(true),
 											},
-											Compute: &mdbv1.ComputeSpec{
-												Enabled:          toptr.MakePtr(true),
-												ScaleDownEnabled: toptr.MakePtr(true),
+											Compute: &akov2.ComputeSpec{
+												Enabled:          pointer.MakePtr(true),
+												ScaleDownEnabled: pointer.MakePtr(true),
 												MinInstanceSize:  "M20",
 												MaxInstanceSize:  "M40",
 											},
 										},
-										Priority:     toptr.MakePtr(7),
+										Priority:     pointer.MakePtr(7),
 										ProviderName: "AWS",
-										RegionName:   "US_EAST_1",
+										RegionName:   "US_WEST_1",
 									},
 								},
 							},
@@ -472,11 +507,11 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 						Name:      fmt.Sprintf("%s-schedule", clusterName),
 						Namespace: testData.Resources.Namespace,
 					},
-					ProcessArgs: &mdbv1.ProcessArgs{
+					ProcessArgs: &akov2.ProcessArgs{
 						DefaultReadConcern:        "available",
 						MinimumEnabledTLSProtocol: "TLS1_2",
-						JavascriptEnabled:         toptr.MakePtr(true),
-						NoTableScan:               toptr.MakePtr(false),
+						JavascriptEnabled:         pointer.MakePtr(true),
+						NoTableScan:               pointer.MakePtr(false),
 					},
 				},
 			}
@@ -484,15 +519,15 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 		})
 
 		By("Cluster is in ready state", func() {
-			expectedConditions := testutil.MatchConditions(
-				status.TrueCondition(status.DeploymentReadyType),
-				status.TrueCondition(status.ReadyType),
-				status.TrueCondition(status.ValidationSucceeded),
-				status.TrueCondition(status.ResourceVersionStatus),
+			expectedConditions := conditions.MatchConditions(
+				api.TrueCondition(api.DeploymentReadyType),
+				api.TrueCondition(api.ReadyType),
+				api.TrueCondition(api.ValidationSucceeded),
+				api.TrueCondition(api.ResourceVersionStatus),
 			)
 
 			Eventually(func(g Gomega) {
-				akoDeployment := &mdbv1.AtlasDeployment{}
+				akoDeployment := &akov2.AtlasDeployment{}
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKey{Namespace: testData.Resources.Namespace, Name: clusterName}, akoDeployment)).To(Succeed())
 				g.Expect(akoDeployment.Status.Conditions).To(ContainElements(expectedConditions))
 			}).WithTimeout(time.Minute * 45).WithPolling(time.Second * 20).Should(Succeed())
@@ -510,31 +545,33 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 				StringData: map[string]string{"password": "myHardPass2MyDB"},
 			}
 			Expect(testData.K8SClient.Create(ctx, secret)).To(Succeed())
-			akoDBUser := &mdbv1.AtlasDatabaseUser{
+			akoDBUser := &akov2.AtlasDatabaseUser{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      fmt.Sprintf("%s-dbuser", projectName),
 					Namespace: testData.Resources.Namespace,
 				},
-				Spec: mdbv1.AtlasDatabaseUserSpec{
-					Project: common.ResourceRefNamespaced{
-						Name:      projectName,
-						Namespace: testData.Resources.Namespace,
+				Spec: akov2.AtlasDatabaseUserSpec{
+					ProjectDualReference: akov2.ProjectDualReference{
+						ProjectRef: &common.ResourceRefNamespaced{
+							Name:      projectName,
+							Namespace: testData.Resources.Namespace,
+						},
 					},
 					DatabaseName: "admin",
 					Labels: []common.LabelSpec{
 						{Key: "type", Value: "e2e-test"},
 						{Key: "context", Value: "cloud-gov"},
 					},
-					Roles: []mdbv1.RoleSpec{
+					Roles: []akov2.RoleSpec{
 						{
 							RoleName:     "readAnyDatabase",
 							DatabaseName: "admin",
 						},
 					},
-					Scopes: []mdbv1.ScopeSpec{
+					Scopes: []akov2.ScopeSpec{
 						{
 							Name: clusterName,
-							Type: mdbv1.DeploymentScopeType,
+							Type: akov2.DeploymentScopeType,
 						},
 					},
 					Username: fmt.Sprintf("%s-dbuser", projectName),
@@ -547,28 +584,28 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 		})
 
 		By("DatabaseUser is in ready state", func() {
-			expectedConditions := testutil.MatchConditions(
-				status.TrueCondition(status.ReadyType),
-				status.TrueCondition(status.ValidationSucceeded),
-				status.TrueCondition(status.ResourceVersionStatus),
+			expectedConditions := conditions.MatchConditions(
+				api.TrueCondition(api.ReadyType),
+				api.TrueCondition(api.ValidationSucceeded),
+				api.TrueCondition(api.ResourceVersionStatus),
 			)
 
 			Eventually(func(g Gomega) {
-				akoDBUser := &mdbv1.AtlasDatabaseUser{}
+				akoDBUser := &akov2.AtlasDatabaseUser{}
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKey{Namespace: testData.Resources.Namespace, Name: fmt.Sprintf("%s-dbuser", projectName)}, akoDBUser)).To(Succeed())
 				g.Expect(akoDBUser.Status.Conditions).To(ContainElements(expectedConditions))
 			}).WithTimeout(time.Minute * 10).WithPolling(time.Second * 20).Should(Succeed())
 		})
 	})
 
-	It("Fail to manage when there are non supported features for Atlas for Government", func() {
+	It("Fail to manage when there are non supported features for Atlas for Government", Label("atlas-gov-unsupported"), func() {
 		By("Creating a project to be managed by the operator", func() {
-			akoProject := &mdbv1.AtlasProject{
+			akoProject := &akov2.AtlasProject{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      projectName,
 					Namespace: testData.Resources.Namespace,
 				},
-				Spec: mdbv1.AtlasProjectSpec{
+				Spec: akov2.AtlasProjectSpec{
 					Name:                    projectName,
 					RegionUsageRestrictions: "GOV_REGIONS_ONLY",
 				},
@@ -580,10 +617,10 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 
 		By("Project is ready", func() {
 			Eventually(func(g Gomega) {
-				expectedConditions := testutil.MatchConditions(
-					status.TrueCondition(status.ValidationSucceeded),
-					status.TrueCondition(status.ProjectReadyType),
-					status.TrueCondition(status.ReadyType),
+				expectedConditions := conditions.MatchConditions(
+					api.TrueCondition(api.ValidationSucceeded),
+					api.TrueCondition(api.ProjectReadyType),
+					api.TrueCondition(api.ReadyType),
 				)
 
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
@@ -592,22 +629,24 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 		})
 
 		By("Creating a Serverless Cluster", func() {
-			akoDeployment := &mdbv1.AtlasDeployment{
+			akoDeployment := &akov2.AtlasDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      clusterName,
 					Namespace: testData.Resources.Namespace,
 				},
-				Spec: mdbv1.AtlasDeploymentSpec{
-					Project: common.ResourceRefNamespaced{
-						Name:      projectName,
-						Namespace: testData.Resources.Namespace,
+				Spec: akov2.AtlasDeploymentSpec{
+					ProjectDualReference: akov2.ProjectDualReference{
+						ProjectRef: &common.ResourceRefNamespaced{
+							Name:      projectName,
+							Namespace: testData.Resources.Namespace,
+						},
 					},
-					ServerlessSpec: &mdbv1.ServerlessSpec{
+					ServerlessSpec: &akov2.ServerlessSpec{
 						Name: clusterName,
-						ProviderSettings: &mdbv1.ProviderSettingsSpec{
+						ProviderSettings: &akov2.ServerlessProviderSettingsSpec{
 							BackingProviderName: "AWS",
 							ProviderName:        "SERVERLESS",
-							RegionName:          "US_GOV_EAST_1",
+							RegionName:          "US_GOV_WEST_1",
 						},
 						TerminationProtectionEnabled: false,
 					},
@@ -617,39 +656,41 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 		})
 
 		By("Serverless is not supported in Atlas for government", func() {
-			expectedConditions := testutil.MatchConditions(
-				status.FalseCondition(status.DeploymentReadyType),
-				status.FalseCondition(status.ReadyType),
-				status.TrueCondition(status.ValidationSucceeded),
+			expectedConditions := conditions.MatchConditions(
+				api.FalseCondition(api.DeploymentReadyType).
+					WithReason(string(workflow.AtlasGovUnsupported)).
+					WithMessageRegexp("the AtlasDeployment is not supported by Atlas for government"),
+				api.FalseCondition(api.ReadyType),
+				api.TrueCondition(api.ResourceVersionStatus),
 			)
 
 			Eventually(func(g Gomega) {
-				akoDeployment := &mdbv1.AtlasDeployment{}
+				akoDeployment := &akov2.AtlasDeployment{}
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKey{Namespace: testData.Resources.Namespace, Name: clusterName}, akoDeployment)).To(Succeed())
 				g.Expect(akoDeployment.Status.Conditions).To(ContainElements(expectedConditions))
 			}).WithTimeout(time.Minute * 5).WithPolling(time.Second * 20).Should(Succeed())
 		})
 
 		By("Creating a Data Federation", func() {
-			akoDataFederation := &mdbv1.AtlasDataFederation{
+			akoDataFederation := &akov2.AtlasDataFederation{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      fmt.Sprintf("%s-data-federation", projectName),
 					Namespace: testData.Resources.Namespace,
 				},
-				Spec: mdbv1.DataFederationSpec{
+				Spec: akov2.DataFederationSpec{
 					Project: common.ResourceRefNamespaced{
 						Name:      projectName,
 						Namespace: testData.Resources.Namespace,
 					},
 					Name: fmt.Sprintf("%s-data-federation", projectName),
-					Storage: &mdbv1.Storage{
-						Databases: []mdbv1.Database{
+					Storage: &akov2.Storage{
+						Databases: []akov2.Database{
 							{
 								Name: "test-db-1",
-								Collections: []mdbv1.Collection{
+								Collections: []akov2.Collection{
 									{
 										Name: "test-collection-1",
-										DataSources: []mdbv1.DataSource{
+										DataSources: []akov2.DataSource{
 											{
 												StoreName: "http-test",
 												Urls: []string{
@@ -661,7 +702,7 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 								},
 							},
 						},
-						Stores: []mdbv1.Store{
+						Stores: []akov2.Store{
 							{
 								Name:     "http-test",
 								Provider: "http",
@@ -674,13 +715,13 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 		})
 
 		By("DataFederation is not supported in Atlas for government", func() {
-			expectedConditions := testutil.MatchConditions(
-				status.FalseCondition(status.DataFederationReadyType),
-				status.FalseCondition(status.ReadyType),
+			expectedConditions := conditions.MatchConditions(
+				api.FalseCondition(api.DataFederationReadyType),
+				api.FalseCondition(api.ReadyType),
 			)
 
 			Eventually(func(g Gomega) {
-				akoDataFederation := &mdbv1.AtlasDataFederation{}
+				akoDataFederation := &akov2.AtlasDataFederation{}
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKey{Namespace: testData.Resources.Namespace, Name: fmt.Sprintf("%s-data-federation", projectName)}, akoDataFederation)).To(Succeed())
 				g.Expect(akoDataFederation.Status.Conditions).To(ContainElements(expectedConditions))
 			}).WithTimeout(time.Minute * 5).WithPolling(time.Second * 20).Should(Succeed())
@@ -689,7 +730,7 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 
 	AfterEach(func() {
 		By("Deleting DataFederation from the operator", func() {
-			akoDataFederation := &mdbv1.AtlasDataFederation{}
+			akoDataFederation := &akov2.AtlasDataFederation{}
 			err := testData.K8SClient.Get(ctx, client.ObjectKey{Namespace: testData.Resources.Namespace, Name: fmt.Sprintf("%s-data-federation", projectName)}, akoDataFederation)
 			if err == nil {
 				Expect(testData.K8SClient.Delete(ctx, akoDataFederation)).To(Succeed())
@@ -701,7 +742,7 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 		})
 
 		By("Deleting DatabaseUser from the operator", func() {
-			akoDBUser := &mdbv1.AtlasDatabaseUser{}
+			akoDBUser := &akov2.AtlasDatabaseUser{}
 			err := testData.K8SClient.Get(ctx, client.ObjectKey{Namespace: testData.Resources.Namespace, Name: fmt.Sprintf("%s-dbuser", projectName)}, akoDBUser)
 			if err == nil {
 				Expect(testData.K8SClient.Delete(ctx, akoDBUser)).To(Succeed())
@@ -714,21 +755,22 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 
 		By("Deleting cluster from the operator", func() {
 			Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
-			akoDeployment := &mdbv1.AtlasDeployment{}
+			akoDeployment := &akov2.AtlasDeployment{}
 			Expect(testData.K8SClient.Get(ctx, client.ObjectKey{Namespace: testData.Resources.Namespace, Name: clusterName}, akoDeployment)).To(Succeed())
-			Expect(testData.K8SClient.Delete(ctx, akoDeployment)).To(Succeed())
+			err := testData.K8SClient.Delete(ctx, akoDeployment)
+			Expect(err == nil || !k8serrors.IsNotFound(err)).To(BeTrue())
 
 			Eventually(func(g Gomega) {
-				_, _, err := atlasClient.Client.AdvancedClusters.Get(ctx, testData.Project.ID(), clusterName)
+				_, _, err := atlasClient.Client.ClustersApi.GetCluster(ctx, testData.Project.ID(), clusterName).Execute()
 				g.Expect(err).To(HaveOccurred())
 			}).WithTimeout(time.Minute * 30).WithPolling(time.Second * 20).Should(Succeed())
 
 			if akoDeployment.Spec.BackupScheduleRef.Name != "" {
-				akoBackupSchedule := &mdbv1.AtlasBackupSchedule{}
+				akoBackupSchedule := &akov2.AtlasBackupSchedule{}
 				Expect(testData.K8SClient.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-schedule", clusterName), Namespace: testData.Resources.Namespace}, akoBackupSchedule)).To(Succeed())
 				Expect(testData.K8SClient.Delete(ctx, akoBackupSchedule)).To(Succeed())
 
-				akoBackupPolicy := &mdbv1.AtlasBackupPolicy{}
+				akoBackupPolicy := &akov2.AtlasBackupPolicy{}
 				Expect(testData.K8SClient.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-policy", clusterName), Namespace: testData.Resources.Namespace}, akoBackupPolicy)).To(Succeed())
 				Expect(testData.K8SClient.Delete(ctx, akoBackupPolicy)).To(Succeed())
 			}
@@ -741,7 +783,7 @@ var _ = Describe("Atlas for Government", Label("atlas-gov"), func() {
 
 			Eventually(func(g Gomega) {
 				g.Expect(testData.K8SClient.Get(ctx, client.ObjectKeyFromObject(testData.Project), testData.Project)).To(Succeed())
-				g.Expect(testData.Project.Status.Conditions).ToNot(ContainElement(testutil.MatchCondition(status.TrueCondition(status.ProjectTeamsReadyType))))
+				g.Expect(testData.Project.Status.Conditions).ToNot(ContainElement(conditions.MatchCondition(api.TrueCondition(api.ProjectTeamsReadyType))))
 			}).WithTimeout(time.Minute * 5).WithPolling(time.Second * 20).Should(Succeed())
 		})
 

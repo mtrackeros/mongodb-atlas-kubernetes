@@ -5,22 +5,20 @@ import (
 	"fmt"
 	"time"
 
-	mdbv1 "github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/common"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/project"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/status"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/controller/atlasdeployment"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/controller/customresource"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/controller/workflow"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/kube"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/testutil"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/toptr"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api"
+	akov2 "github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1/common"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1/project"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/controller/customresource"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/kube"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/pointer"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/test/helper/resources"
 )
 
 // nolint:dupl
@@ -30,8 +28,8 @@ var _ = Describe("AtlasBackupSchedule Deletion Protected",
 		var testNamespace *corev1.Namespace
 		var stopManager context.CancelFunc
 		var connectionSecret corev1.Secret
-		var testProject *mdbv1.AtlasProject
-		var testDeployment *mdbv1.AtlasDeployment
+		var testProject *akov2.AtlasProject
+		var testDeployment *akov2.AtlasDeployment
 
 		BeforeAll(func() {
 			By("Starting the operator with protection ON", func() {
@@ -46,16 +44,16 @@ var _ = Describe("AtlasBackupSchedule Deletion Protected",
 			})
 
 			By("Creating a project with deletion annotation", func() {
-				testProject = mdbv1.DefaultProject(testNamespace.Name, connectionSecret.Name).WithIPAccessList(project.NewIPAccessList().WithCIDR("0.0.0.0/0"))
+				testProject = akov2.DefaultProject(testNamespace.Name, connectionSecret.Name).WithIPAccessList(project.NewIPAccessList().WithCIDR("0.0.0.0/0"))
 				customresource.SetAnnotation( // this test project must be deleted
 					testProject,
 					customresource.ResourcePolicyAnnotation,
 					customresource.ResourcePolicyDelete,
 				)
-				Expect(k8sClient.Create(context.TODO(), testProject, &client.CreateOptions{})).To(Succeed())
+				Expect(k8sClient.Create(context.Background(), testProject, &client.CreateOptions{})).To(Succeed())
 
 				Eventually(func() bool {
-					return testutil.CheckCondition(k8sClient, testProject, status.TrueCondition(status.ReadyType))
+					return resources.CheckCondition(k8sClient, testProject, api.TrueCondition(api.ReadyType))
 				}).WithTimeout(3 * time.Minute).WithPolling(PollingInterval).Should(BeTrue())
 			})
 		})
@@ -71,7 +69,7 @@ var _ = Describe("AtlasBackupSchedule Deletion Protected",
 				Expect(k8sClient.Delete(context.Background(), testDeployment)).To(Succeed())
 			})
 			By("Deleting project from k8s and atlas", func() {
-				Expect(k8sClient.Delete(context.TODO(), testProject, &client.DeleteOptions{})).To(Succeed())
+				Expect(k8sClient.Delete(context.Background(), testProject, &client.DeleteOptions{})).To(Succeed())
 				Eventually(
 					checkAtlasProjectRemoved(testProject.Status.ID),
 				).WithTimeout(20 * time.Minute).WithPolling(PollingInterval).Should(BeTrue())
@@ -88,11 +86,11 @@ var _ = Describe("AtlasBackupSchedule Deletion Protected",
 			})
 		})
 
-		It("Should not process BackupSchedule with deletion protection ON", func() {
-			var bsPolicy *mdbv1.AtlasBackupPolicy
-			var bsSchedule *mdbv1.AtlasBackupSchedule
+		It("Should process BackupSchedule with deletion protection ON", func() {
+			var bsPolicy *akov2.AtlasBackupPolicy
+			var bsSchedule *akov2.AtlasBackupSchedule
 			By("Creating AtlasBackupPolicy resource", func() {
-				bsPolicy = &mdbv1.AtlasBackupPolicy{
+				bsPolicy = &akov2.AtlasBackupPolicy{
 					TypeMeta: metav1.TypeMeta{
 						Kind:       "atlas.mongodb.com/v1",
 						APIVersion: "AtlasBackupPolicy",
@@ -103,11 +101,11 @@ var _ = Describe("AtlasBackupSchedule Deletion Protected",
 						Labels:      map[string]string{},
 						Annotations: map[string]string{},
 					},
-					Spec: mdbv1.AtlasBackupPolicySpec{
-						Items: []mdbv1.AtlasBackupPolicyItem{
+					Spec: akov2.AtlasBackupPolicySpec{
+						Items: []akov2.AtlasBackupPolicyItem{
 							{
 								FrequencyType:     "daily",
-								FrequencyInterval: 5,
+								FrequencyInterval: 1,
 								RetentionUnit:     "days",
 								RetentionValue:    20,
 							},
@@ -118,7 +116,7 @@ var _ = Describe("AtlasBackupSchedule Deletion Protected",
 			})
 
 			By("Creating AtlasBackupSchedule resource", func() {
-				bsSchedule = &mdbv1.AtlasBackupSchedule{
+				bsSchedule = &akov2.AtlasBackupSchedule{
 					TypeMeta: metav1.TypeMeta{
 						Kind:       "atlas.mongodb.com/v1",
 						APIVersion: "AtlasBackupSchedule",
@@ -127,38 +125,38 @@ var _ = Describe("AtlasBackupSchedule Deletion Protected",
 						Name:      "bs-schedule",
 						Namespace: testNamespace.Name,
 					},
-					Spec: mdbv1.AtlasBackupScheduleSpec{
+					Spec: akov2.AtlasBackupScheduleSpec{
 						AutoExportEnabled: false,
 						PolicyRef: common.ResourceRefNamespaced{
 							Name:      bsPolicy.Name,
 							Namespace: bsPolicy.Namespace,
 						},
-						ReferenceHourOfDay:                10,
-						ReferenceMinuteOfHour:             10,
-						RestoreWindowDays:                 10,
+						ReferenceHourOfDay:                12,
+						ReferenceMinuteOfHour:             20,
+						RestoreWindowDays:                 2,
 						UpdateSnapshots:                   false,
 						UseOrgAndGroupNamesInExportPrefix: false,
-						CopySettings:                      []mdbv1.CopySetting{},
+						CopySettings:                      []akov2.CopySetting{},
 					},
 				}
 				Expect(k8sClient.Create(context.Background(), bsSchedule)).To(Succeed())
 			})
 
 			By("Creating a deployment with backups enabled (default)", func() {
-				testDeployment = mdbv1.DefaultAWSDeployment(testNamespace.Name, testProject.Name)
-				testDeployment.Spec.DeploymentSpec.ProviderBackupEnabled = toptr.MakePtr(true)
+				testDeployment = akov2.DefaultAWSDeployment(testNamespace.Name, testProject.Name)
+				testDeployment.Spec.DeploymentSpec.BackupEnabled = pointer.MakePtr(true)
 				Expect(k8sClient.Create(context.Background(), testDeployment)).To(Succeed())
 			})
 
 			By("Deployment should be Ready", func() {
 				Eventually(func(g Gomega) bool {
-					return testutil.CheckCondition(k8sClient, testDeployment, status.TrueCondition(status.ReadyType), validateDeploymentUpdatingFunc(g))
+					return resources.CheckCondition(k8sClient, testDeployment, api.TrueCondition(api.ReadyType), validateDeploymentUpdatingFunc(g))
 				}).WithTimeout(30 * time.Minute).WithPolling(PollingInterval).Should(BeTrue())
 			})
 
 			By("Add custom BackupSchedule for the Deployment", func() {
 				Eventually(func(g Gomega) {
-					deployment := &mdbv1.AtlasDeployment{}
+					deployment := &akov2.AtlasDeployment{}
 					g.Expect(
 						k8sClient.Get(context.Background(),
 							kube.ObjectKeyFromObject(testDeployment),
@@ -174,14 +172,12 @@ var _ = Describe("AtlasBackupSchedule Deletion Protected",
 				}).WithTimeout(2 * time.Minute).WithPolling(20 * time.Second).Should(Succeed())
 			})
 
-			By("Deployment should NOT be Ready", func() {
+			By("Deployment should be Ready", func() {
 				Eventually(func(g Gomega) bool {
-					return testutil.CheckCondition(
+					return resources.CheckCondition(
 						k8sClient,
 						testDeployment,
-						status.FalseCondition(status.DeploymentReadyType).
-							WithReason(string(workflow.Internal)).
-							WithMessageRegexp(atlasdeployment.BackupProtected),
+						api.TrueCondition(api.DeploymentReadyType),
 						validateDeploymentUpdatingFunc(g))
 				}).WithTimeout(30 * time.Minute).WithPolling(PollingInterval).Should(BeTrue())
 			})

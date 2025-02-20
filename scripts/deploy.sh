@@ -9,11 +9,11 @@ if [[ -z "${REGISTRY:-}" ]]; then
 fi
 
 image="${REGISTRY}/mongodb-atlas-kubernetes-operator"
-docker build --rm -t "${image}" .
+docker build -f fast.Dockerfile --rm -t "${image}" .
 docker push "${image}"
 
 #Prepare CRDs
-controller-gen crd:crdVersions=v1 rbac:roleName=manager-role webhook paths="./pkg/api/..." output:crd:artifacts:config=config/crd/bases
+controller-gen crd:crdVersions=v1,ignoreUnexportedFields=true rbac:roleName=manager-role webhook paths="./api/..." paths="./internal/controller/..." output:crd:artifacts:config=config/crd/bases
 
 #Installing the CRD,Operator,Role
 ns=mongodb-atlas-system

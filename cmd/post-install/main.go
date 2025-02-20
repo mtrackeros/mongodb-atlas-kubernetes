@@ -6,15 +6,15 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-
-	mdbv1 "github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/api/v1/status"
-	"github.com/mongodb/mongodb-atlas-kubernetes/pkg/util/kube"
-
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
+
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/api"
+	akov2 "github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/kube"
 )
 
 const (
@@ -46,13 +46,13 @@ func createK8sClient() (client.Client, error) {
 		return nil, err
 	}
 
-	k8sClient.Scheme().AddKnownTypes(schema.GroupVersion{Group: "atlas.mongodb.com", Version: "v1"}, &mdbv1.AtlasDeployment{}, &mdbv1.AtlasDeploymentList{})
+	k8sClient.Scheme().AddKnownTypes(schema.GroupVersion{Group: "atlas.mongodb.com", Version: "v1"}, &akov2.AtlasDeployment{}, &akov2.AtlasDeploymentList{})
 	return k8sClient, nil
 }
 
 // isDeploymentReady returns a boolean indicating if the deployment has reached the ready state and is
 // ready to be used.
-func isDeploymentReady(logger *zap.SugaredLogger) (bool, error) {
+func isDeploymentReady(ctx context.Context, logger *zap.SugaredLogger) (bool, error) {
 	k8sClient, err := createK8sClient()
 	if err != nil {
 		return false, err
@@ -71,14 +71,14 @@ func isDeploymentReady(logger *zap.SugaredLogger) (bool, error) {
 		}
 		totalTime += pollingInterval
 
-		atlasDeployment := mdbv1.AtlasDeployment{}
-		if err := k8sClient.Get(context.TODO(), kube.ObjectKey(namespace, deploymentName), &atlasDeployment); err != nil {
+		atlasDeployment := akov2.AtlasDeployment{}
+		if err := k8sClient.Get(ctx, kube.ObjectKey(namespace, deploymentName), &atlasDeployment); err != nil {
 			return false, err
 		}
 
 		// the atlas project has reached the DeploymentReady state.
 		for _, cond := range atlasDeployment.Status.Conditions {
-			if cond.Type == status.DeploymentReadyType {
+			if cond.Type == api.DeploymentReadyType {
 				if cond.Status == corev1.ConditionTrue {
 					return true, nil
 				}
@@ -90,9 +90,10 @@ func isDeploymentReady(logger *zap.SugaredLogger) (bool, error) {
 }
 
 func main() {
+	ctx := signals.SetupSignalHandler()
 	logger := setupLogger()
 
-	deploymentIsReady, err := isDeploymentReady(logger)
+	deploymentIsReady, err := isDeploymentReady(ctx, logger)
 	if err != nil {
 		logger.Error(err)
 		os.Exit(1)
