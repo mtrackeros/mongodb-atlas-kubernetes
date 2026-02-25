@@ -13,6 +13,7 @@
 # limitations under the License.
 #
 
+
 kind: Config
 apiVersion: atlas2crd.mongodb.com/v1alpha1
 
@@ -24,7 +25,7 @@ apiVersion: atlas2crd.mongodb.com/v1alpha1
       type:
         kind: Group
         resource: groups
-        group: atlas.generated.mongodb.com
+        group: atlas.generated.experimental.mongodb.com
         version: v1
       properties:
         - $.status.v20250312.id
@@ -59,7 +60,7 @@ spec:
     - gvk:
         version: v1
         kind: Group
-        group: atlas.generated.mongodb.com
+        group: atlas.generated.experimental.mongodb.com
       categories:
         - atlas
       shortNames:
@@ -86,7 +87,7 @@ spec:
     - gvk:
         version: v1
         kind: Cluster
-        group: atlas.generated.mongodb.com
+        group: atlas.generated.experimental.mongodb.com
       categories:
         - atlas
       shortNames:
@@ -159,7 +160,7 @@ spec:
     - gvk:
         version: v1
         kind: FlexCluster
-        group: atlas.generated.mongodb.com
+        group: atlas.generated.experimental.mongodb.com
       categories:
         - atlas
       shortNames:
@@ -192,7 +193,7 @@ spec:
     - gvk:
         version: v1
         kind: DatabaseUser
-        group: atlas.generated.mongodb.com
+        group: atlas.generated.experimental.mongodb.com
       categories:
         - atlas
       shortNames:
