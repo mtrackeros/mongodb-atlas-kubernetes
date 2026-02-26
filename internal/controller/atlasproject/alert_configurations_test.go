@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/atlas-sdk/v20250312013/admin"
-	"go.mongodb.org/atlas-sdk/v20250312013/mockadmin"
+	"go.mongodb.org/atlas-sdk/v20250312014/admin"
+	"go.mongodb.org/atlas-sdk/v20250312014/mockadmin"
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -534,7 +534,7 @@ func TestSyncAlertConfigurations(t *testing.T) {
 			}
 
 			atlasClientSet := &atlas.ClientSet{
-				SdkClient20250312013: mockAPIClient,
+				SdkClient20250312014: mockAPIClient,
 			}
 
 			workflowCtx := &workflow.Context{
@@ -669,7 +669,7 @@ func TestDeleteAlertConfigs(t *testing.T) {
 			}
 
 			atlasClientSet := &atlas.ClientSet{
-				SdkClient20250312013: mockAPIClient,
+				SdkClient20250312014: mockAPIClient,
 			}
 
 			workflowCtx := &workflow.Context{
@@ -772,7 +772,7 @@ func TestCreateAlertConfigs(t *testing.T) {
 			}
 
 			atlasClientSet := &atlas.ClientSet{
-				SdkClient20250312013: mockAPIClient,
+				SdkClient20250312014: mockAPIClient,
 			}
 
 			workflowCtx := &workflow.Context{
